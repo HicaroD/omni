@@ -1,7 +1,7 @@
 TELIA ?= telia
 export T_VENDOR_PATH := $(CURDIR)/vendor
 
-.PHONY: build run unit test test-release sanitize clean
+.PHONY: build run unit test test-release test-install sanitize clean
 build:
 	mkdir -p bin
 	$(TELIA) build . -o bin/omni
@@ -12,6 +12,9 @@ test: build
 	python3 tests/terminal.py
 unit:
 	$(TELIA) test --color=never
+test-install:
+	sh -n install.sh
+	python3 tests/install.py
 test-release:
 	mkdir -p bin
 	$(TELIA) build . -release -o bin/omni-release

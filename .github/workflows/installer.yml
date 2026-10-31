@@ -1,0 +1,19 @@
+name: Installer tests
+
+on:
+  push:
+    branches: [master]
+    paths: ['install.sh', 'tests/install.py', 'Makefile', '.github/workflows/installer.yml']
+  pull_request:
+    paths: ['install.sh', 'tests/install.py', 'Makefile', '.github/workflows/installer.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-install

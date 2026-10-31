@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version and architecture
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          test "$(uname -m)" = arm64
+          printf '%s\n' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
+      - name: Install Telia v0.3.0
+        run: |
+          mkdir -p "$RUNNER_TEMP/telia"
+          cd "$RUNNER_TEMP/telia"
+          base=https://github.com/HicaroD/Telia/releases/download/v0.3.0
+          curl -fSL --retry 3 "$base/telia-darwin-arm64.tar.gz" -o telia-darwin-arm64.tar.gz
+          echo 'c0003b6308f7676a8d512ef61030c02feb381f59ccfbb634f795673f05e16efb  telia-darwin-arm64.tar.gz' | shasum -a 256 -c -
+          tar -xzf telia-darwin-arm64.tar.gz
+          compiler=$(find "$PWD" -type f -name telia -perm -111)
+          test -n "$compiler"
+          dirname "$compiler" >> "$GITHUB_PATH"
+      - name: Install test dependency
+        run: brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
+      - name: Test installer
+        run: make test-install
+      - name: Build and test optimized editor
+        run: make test-release
+      - name: Package and verify standalone binary
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist "$RUNNER_TEMP/omni-smoke"
+          cp bin/omni-release "$RUNNER_TEMP/omni-smoke/omni"
+          file "$RUNNER_TEMP/omni-smoke/omni" | grep -q arm64
+          otool -L "$RUNNER_TEMP/omni-smoke/omni" | tee "$RUNNER_TEMP/omni-dependencies.txt"
+          awk 'NR > 1 && $1 !~ /^\/(usr\/lib|System\/Library)\// { bad = 1 } END { exit bad }' "$RUNNER_TEMP/omni-dependencies.txt"
+          codesign --force --sign - "$RUNNER_TEMP/omni-smoke/omni"
+          codesign --verify "$RUNNER_TEMP/omni-smoke/omni"
+          tar -czf "dist/omni-$VERSION-darwin-arm64.tar.gz" -C "$RUNNER_TEMP/omni-smoke" omni
+          tar -xzf "dist/omni-$VERSION-darwin-arm64.tar.gz" -C "$RUNNER_TEMP/omni-smoke"
+          cd "$RUNNER_TEMP"
+          OMNI_BINARY="$RUNNER_TEMP/omni-smoke/omni" python3 "$GITHUB_WORKSPACE/tests/terminal.py"
+          cd "$GITHUB_WORKSPACE/dist"
+          shasum -a 256 omni-*.tar.gz > checksums.txt
+          cp ../install.sh .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$VERSION" dist/* --verify-tag --title "$VERSION" --generate-notes "${flags[@]}"
