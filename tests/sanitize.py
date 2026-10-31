@@ -35,6 +35,5 @@ with tempfile.TemporaryDirectory(prefix="omni-sanitize-") as temp:
     env = dict(os.environ, T_VENDOR_PATH=str(work / "vendor"), UBSAN_OPTIONS="halt_on_error=1")
     compiler = os.environ.get("TELIA", "telia")
     run(compiler, "build", str(ROOT), "-o", str(work / "omni"), env=env)
-    run(compiler, "build", str(ROOT / "tests"), "-o", str(work / "rope"), env=env)
-    run(str(work / "rope"), env=env)
+    run(compiler, "test", "--color=never", env=env)
     run("python3", str(ROOT / "tests" / "terminal.py"), env=dict(env, OMNI_BINARY=str(work / "omni")))

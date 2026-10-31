@@ -1,8 +1,8 @@
 package main
 
-use "pkg::..::rope"
+use "pkg::rope"
 use "std::lists"
-use "std::io"
+use "std::memory"
 
 fn test_remainder(value u64, divisor u64) u64 {
     return value - (value / divisor) * divisor
@@ -59,12 +59,8 @@ fn randomized() error {
         initial[i] = values[test_random(&seed, 9)]
         i = i + 1
     }
-    rope::replace(&r, 0, 0, initial[:]) @catch err {
-        return err
-    }
-    lists::append_slice<u8>(&reference, initial[:]) @catch err {
-        return err
-    }
+    rope::replace(&r, 0, 0, initial[:]) @try
+    lists::append_slice<u8>(&reference, initial[:]) @try
     step u64 := 0
     while step < 1800 {
         size := lists::count<u8>(&reference)
@@ -80,33 +76,18 @@ fn randomized() error {
             data[j] = values[test_random(&seed, 9)]
             j = j + 1
         }
-        part := data[0:inserted] @catch err {
-            return err
-        }
-        rope::replace(&r, start, start + removed, part) @catch err {
-            return err
-        }
+        part := data[0:inserted] @try
+        rope::replace(&r, start, start + removed, part) @try
         replacement := lists::create<u8>()
         defer lists::free<u8>(&replacement)
         old := lists::view<u8>(&reference)
-        prefix := old[0:start] @catch err {
-            return err
-        }
-        tail := old[start + removed:size] @catch err {
-            return err
-        }
-        lists::append_slice<u8>(&replacement, prefix) @catch err {
-            return err
-        }
-        lists::append_slice<u8>(&replacement, part) @catch err {
-            return err
-        }
-        lists::append_slice<u8>(&replacement, tail) @catch err {
-            return err
-        }
+        prefix := old[0:start] @try
+        tail := old[start + removed:size] @try
+        lists::append_slice<u8>(&replacement, prefix) @try
+        lists::append_slice<u8>(&replacement, part) @try
+        lists::append_slice<u8>(&replacement, tail) @try
         lists::free<u8>(&reference)
-        reference = replacement
-        replacement = zero<lists::List<u8>>()
+        reference = memory::take<lists::List<u8>>(&replacement)
         bytes, breaks, depth := verify_node(r.root)
         check(bytes == lists::count<u8>(&reference))
         expected := lists::view<u8>(&reference)
@@ -130,9 +111,7 @@ fn randomized() error {
     invalid := rope::replace(&r, before + 1, before + 1, zero<u8[]>())
     check(invalid != nil)
     check(rope::size(r.root) == before)
-    flat := rope::copy(&r, 0, before) @catch err {
-        return err
-    }
+    flat := rope::copy(&r, 0, before) @try
     defer lists::free<u8>(&flat)
     actual := lists::view<u8>(&flat)
     expected_all := lists::view<u8>(&reference)
@@ -141,10 +120,7 @@ fn randomized() error {
         check(actual[k2] == expected_all[k2])
         k2 = k2 + 1
     }
-    rope::replace(&r, 0, before, zero<u8[]>()) @catch err {
-        return err
-    }
+    rope::replace(&r, 0, before, zero<u8[]>()) @try
     check(r.root == nil)
-    io::println("1,800 randomized rope edits and tree invariants passed")
     return nil
 }

@@ -20,7 +20,6 @@ void omni_locale(void) { setlocale(LC_CTYPE, ""); }
 int32_t omni_width(uint32_t cp) { return wcwidth((wchar_t)cp); }
 uint8_t omni_byte(const char *s, uint64_t i) { return (uint8_t)s[i]; }
 const char *omni_cview(void *p) { return p; }
-uint32_t omni_widen(uint8_t value) { return value; }
 
 int32_t omni_path(const char *path, void **resolved) {
     char *full = realpath(path, NULL);

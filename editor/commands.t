@@ -157,8 +157,7 @@ fn find(app *App, reverse bool) {
     }
     offset := app.active.cursor
     tried u64 := 0
-    matched := false
-    while tried < size and matched == false {
+    while tried < size {
         if reverse {
             if offset == 0 {
                 offset = size - 1
@@ -185,13 +184,11 @@ fn find(app *App, reverse bool) {
         }
         if good {
             app.active.cursor = offset
-            matched = true
+            return
         }
         tried = tried + 1
     }
-    if matched == false {
-        app.message = "No search match"
-    }
+    app.message = "No search match"
 }
 
 fn yank(app *App, start u64, end u64, linewise bool) error {

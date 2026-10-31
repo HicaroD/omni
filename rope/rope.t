@@ -51,9 +51,7 @@ fn recount(n *Node) {
 }
 
 fn allocate(r *Rope) (*Node, error) {
-    storage := memory::alloc(sizeof<Node>()) @catch err {
-        return nil, err
-    }
+    storage := memory::alloc(sizeof<Node>()) @try
     view := slice_from_raw<Node>(storage, 1)
     view[0] = zero<Node>()
     next := r.seed * 48271 + 1
@@ -183,13 +181,10 @@ fn replace(r *Rope, start u64, end u64, data u8[]) error {
         return nil
     }
     inserted *Node := nil
+    defer destroy(inserted)
     offset u64 := 0
     while offset < len(data) {
-        node, err := allocate(r)
-        if err != nil {
-            destroy(inserted)
-            return err
-        }
+        node := allocate(r) @try
         while node.used < 512 and offset < len(data) {
             node.data[node.used] = data[offset]
             node.used = node.used + 1
@@ -198,27 +193,20 @@ fn replace(r *Rope, start u64, end u64, data u8[]) error {
         recount(node)
         inserted = merge(inserted, node)
     }
-    one, spare_err := allocate(r)
-    if spare_err != nil {
-        destroy(inserted)
-        return spare_err
-    }
-    two, err2 := allocate(r)
-    if err2 != nil {
-        destroy(inserted)
-        memory::free(one)
-        return err2
-    }
+    one := allocate(r) @try
+    defer memory::free(one)
+    two := allocate(r) @try
+    defer memory::free(two)
     a, tail, used1 := split(r.root, start, one)
     removed, b, used2 := split(tail, end - start, two)
-    if used1 == false {
-        memory::free(one)
+    if used1 {
+        memory::take<*Node>(&one)
     }
-    if used2 == false {
-        memory::free(two)
+    if used2 {
+        memory::take<*Node>(&two)
     }
     destroy(removed)
-    r.root = merge(merge(a, inserted), b)
+    r.root = merge(merge(a, memory::take<*Node>(&inserted)), b)
     return nil
 }
 
@@ -244,16 +232,12 @@ fn copy_node(n *Node, base u64, start u64, end u64, out *lists::List<u8>) error 
     if n == nil or base >= end or base + size(n) <= start {
         return nil
     }
-    copy_node(n.left, base, start, end, out) @catch err {
-        return err
-    }
+    copy_node(n.left, base, start, end, out) @try
     middle := base + size(n.left)
     i u64 := 0
     while i < n.used {
         if middle + i >= start and middle + i < end {
-            lists::append<u8>(out, n.data[i]) @catch err {
-                return err
-            }
+            lists::append<u8>(out, n.data[i]) @try
         }
         i = i + 1
     }
@@ -262,17 +246,13 @@ fn copy_node(n *Node, base u64, start u64, end u64, out *lists::List<u8>) error 
 
 fn copy(r *Rope, start u64, end u64) (lists::List<u8>, error) {
     out := lists::create<u8>()
+    defer lists::free<u8>(&out)
     if start > end or end > size(r.root) {
         return out, error("invalid rope range")
     }
-    lists::reserve<u8>(&out, end - start) @catch err {
-        return out, err
-    }
-    copy_node(r.root, 0, start, end, &out) @catch err {
-        lists::free<u8>(&out)
-        return out, err
-    }
-    return out, nil
+    lists::reserve<u8>(&out, end - start) @try
+    copy_node(r.root, 0, start, end, &out) @try
+    return memory::take<lists::List<u8>>(&out), nil
 }
 
 fn line_start(r *Rope, line u64) u64 {

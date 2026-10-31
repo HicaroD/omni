@@ -10,8 +10,6 @@ extern {
     fn stamp(path c::ConstCString) u64
     @[link_name="omni_cview"]
     fn cview(data rawptr) c::ConstCString
-    @[link_name="omni_widen"]
-    fn widen(value u8) u32
     @[link_name="omni_argc"]
     fn argc() u64
     @[link_name="omni_arg"]

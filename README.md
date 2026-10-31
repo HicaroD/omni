@@ -1,11 +1,11 @@
 # Omni
 
-A keyboard-driven terminal editor written in **Telia v0.2.1**. Vim-inspired,
+A keyboard-driven terminal editor written in **Telia v0.3.0**. Vim-inspired,
 not Vim-compatible. Currently targets macOS.
 
 ## Build and run
 
-Requires Telia v0.2.1, Xcode command-line tools, and [ripgrep](https://github.com/BurntSushi/ripgrep)
+Requires Telia v0.3.0, Xcode command-line tools, and [ripgrep](https://github.com/BurntSushi/ripgrep)
 (`rg` on `PATH`). Python 3 is needed only for the test suite.
 
 ```sh
@@ -133,7 +133,8 @@ editor/screen.t           row cache, changed-row writes, cursor/sync state
 editor/picker.t           fuzzy ranking, incremental rg results, previews
 editor/session.t          terminal lifecycle, CLI, event loop
 vendor/platform/          narrow macOS file/process/width/argv ABI adapter
-tests/                    Telia rope tests and real-PTY integration tests
+*_test.t                  native Telia rope/editor unit tests
+tests/                    real-PTY integration tests and sanitizer tooling
 ```
 
 Rope nodes hold up to 512 bytes with cached subtree byte/newline counts. Random
@@ -143,21 +144,29 @@ boundaries can fall inside a UTF-8 sequence; decoding reads across them. All
 fallible allocations for a splice occur before the tree is mutated. Undo records
 own deleted/inserted bytes; snapshots are not persistent ropes.
 
-Terminal state is restored through normal error returns and deferred cleanup;
+Terminal state is restored through cleanup-safe `@try` propagation and deferred cleanup;
 `@fail` is confined to the outer entry point. Forced process termination or a
 runtime panic cannot guarantee restoration. Use `reset` if the terminal is left
 in a bad state after a crash.
 
-### Telia v0.2.1 compatibility notes
+### Telia v0.3.0 migration
 
-- There is no `break`/`continue` support; loops use conditions and state flags.
-- Indexed expressions emit bounds-check setup before their surrounding
-  expression. Avoid indexed reads in short-circuit guards and loop conditions;
-  `byte_at` keeps the check inside a function evaluated at the intended time.
-- Build the project directory by absolute path, as the Makefile does. Building
-  `.` directly currently produces an invalid output path with this compiler.
-- The session uses standard terminal handles. On this macOS host, polling a
-  separately opened `/dev/tty` reports `POLLNVAL`.
+- Input decoding, picker ranking, and undo traversal use `break`/`continue`
+  instead of extra loop-control flags.
+- Direct indexed fields and guarded indexed conditions replace temporary
+  pointers and the old `byte_at` compiler workaround.
+- `@try` propagates errors through terminal sessions, input decoding, and rope
+  operations while running cleanup. Recovery paths retain explicit handlers.
+- `memory::take` transfers owning lists, strings, and pointers without hand-written
+  shallow-copy-and-zero sequences. Deferred cleanup retains ownership on failure.
+- `widen<u32>` replaces the native byte-widening shim. The remaining native
+  adapter supplies OS functionality and C-text operations not covered by these
+  conversions; `ptr_cast` deliberately does not accept C-string types.
+- The build-path fix allows `telia build .`. Native tests run with `telia test`.
+
+The session still uses standard terminal handles. On this macOS host, polling a
+separately opened `/dev/tty` reports `POLLNVAL`; this is independent of the
+language changes.
 
 ### Current limits
 
@@ -189,23 +198,32 @@ extension.
 ## Verification
 
 ```sh
-make test                   # debug build, randomized rope checks, 26 PTY tests
-make test-release           # repeat with optimized builds
+make unit                   # 5 native Telia unit tests
+make test                   # debug build, native unit tests, 26 PTY tests
+make test-release           # native unit tests + PTY tests on optimized editor
 make sanitize               # UndefinedBehaviorSanitizer, including generated C
 OMNI_SANITIZERS=address,undefined make sanitize
 cc -Wall -Wextra -Werror -fsyntax-only vendor/platform/platform.c
 ```
+
+`telia test` discovers root-level `*_test.t` files; normal builds exclude them.
+The native test runner currently uses its default build mode even when the
+editor is built with `-release`. Sanitizer runs instrument both the editor and
+the native unit-test executable through the local native manifest.
 
 The rope suite checks 1,800 deterministic randomized splices against a flat byte
 buffer, including NUL/invalid UTF-8, cached counts, line lookup, heap ordering,
 tree height, copying, invalid ranges, and full deletion. PTY tests exercise
 editing, undo, splits, pickers/search, paste fragmentation, resizing, save guards,
 symlinks, and terminal restoration without touching the developer's terminal.
+Native editor tests cover fragmented escape/paste input, guarded slice bounds,
+and fuzzy ranking past the result cap.
 
 Sanitizer runs first probe the host runtime. AddressSanitizer hangs even for a
 minimal C program on the initial development host; it has **not** been validated
 there. Debug, release, UBSan, and native warning checks pass.
 
 Telia references: [repository](https://github.com/HicaroD/Telia),
-[terminal](https://github.com/HicaroD/Telia/blob/50a3c9a235bb62190718dbfb75cffeea3fd30731/docs/terminal.md),
-[collections](https://github.com/HicaroD/Telia/blob/50a3c9a235bb62190718dbfb75cffeea3fd30731/docs/collections.md).
+[terminal](https://github.com/HicaroD/Telia/blob/70768d74b66615c01824d5560578846637c1a661/docs/terminal.md),
+[collections](https://github.com/HicaroD/Telia/blob/70768d74b66615c01824d5560578846637c1a661/docs/collections.md),
+[testing](https://github.com/HicaroD/Telia/blob/70768d74b66615c01824d5560578846637c1a661/docs/testing.md).

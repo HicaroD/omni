@@ -475,12 +475,11 @@ class TerminalTests(unittest.TestCase):
         e.output.clear()
         e.read(0.15)
         self.assertEqual(e.output, b"")
-        e.read(0.8)
-        self.assertIn(b"file.t", e.output)
         deadline = time.monotonic() + 3
         while b"Literal / smart case" not in e.output and time.monotonic() < deadline:
             e.read(0.05)
         self.assertIn(b"Literal / smart case", e.output)
+        self.assertIn(b"file.t", e.output)
         e.output.clear()
         e.read(0.15)
         self.assertEqual(e.output, b"")

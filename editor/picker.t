@@ -171,47 +171,36 @@ fn filter_picker(p *Picker) error {
     items := lists::view<Item>(&p.items)
     i u64 := 0
     while i < len(items) {
+        index := i
+        i = i + 1
         score u64 := 0
         found := true
         if p.kind != 2 {
-            candidate := &items[i]
-            rank, ok := fuzzy(strings::view(&candidate.label), lists::view<u8>(&p.query))
+            rank, ok := fuzzy(strings::view(&items[index].label), lists::view<u8>(&p.query))
             score = rank
             found = ok
         }
-        if found {
-            accepted := true
-            count := lists::count<Match>(&p.matches)
-            if count < 100 {
-                lists::append<Match>(&p.matches, Match{index: i, score: score}) @catch err {
-                    return err
-                }
-            } else {
-                current := lists::view<Match>(&p.matches)
-                last_match := &current[99]
-                if score > last_match.score {
-                    current[99] = Match{index: i, score: score}
-                } else {
-                    accepted = false
-                }
-            }
-            ranked := lists::view<Match>(&p.matches)
-            pos := len(ranked) - 1
-            sorting := accepted
-            while pos > 0 and sorting {
-              now := &ranked[pos]
-              previous := &ranked[pos - 1]
-              if now.score > previous.score {
-                temp := ranked[pos]
-                ranked[pos] = ranked[pos - 1]
-                ranked[pos - 1] = temp
-                pos = pos - 1
-              } else {
-                sorting = false
-              }
-            }
+        if found == false {
+            continue
         }
-        i = i + 1
+        count := lists::count<Match>(&p.matches)
+        current := lists::view<Match>(&p.matches)
+        if count == 100 and score <= current[99].score {
+            continue
+        }
+        if count < 100 {
+            lists::append<Match>(&p.matches, Match{index: index, score: score}) @try
+        } else {
+            current[99] = Match{index: index, score: score}
+        }
+        ranked := lists::view<Match>(&p.matches)
+        pos := len(ranked) - 1
+        while pos > 0 and ranked[pos].score > ranked[pos - 1].score {
+            temp := ranked[pos]
+            ranked[pos] = ranked[pos - 1]
+            ranked[pos - 1] = temp
+            pos = pos - 1
+        }
     }
     count2 := lists::count<Match>(&p.matches)
     if count2 == 0 {
@@ -228,7 +217,7 @@ fn parse_decimal(bytes u8[], start u64, end u64) u64 {
     i := start
     while i < end {
         d u64 := 0
-        while d < 10 and byte_at(digits[:], d) != byte_at(bytes, i) {
+        while d < 10 and digits[d] != bytes[i] {
             d = d + 1
         }
         if d == 10 or value > 1000000000 {
@@ -246,18 +235,18 @@ fn add_record(p *Picker, bytes u8[]) error {
     column u64 := 0
     if p.kind == 2 {
         path_end = 0
-        while path_end < len(bytes) and byte_at(bytes, path_end) != 0 {
+        while path_end < len(bytes) and bytes[path_end] != 0 {
             path_end = path_end + 1
         }
         a := path_end + 1
         colon := a
-        while colon < len(bytes) and byte_at(bytes, colon) != 58 {
+        while colon < len(bytes) and bytes[colon] != 58 {
             colon = colon + 1
         }
         line = parse_decimal(bytes, a, colon)
         b := colon + 1
         colon2 := b
-        while colon2 < len(bytes) and byte_at(bytes, colon2) != 58 {
+        while colon2 < len(bytes) and bytes[colon2] != 58 {
             colon2 = colon2 + 1
         }
         column = parse_decimal(bytes, b, colon2)
@@ -323,7 +312,7 @@ fn poll_picker(p *Picker) error {
     start u64 := 0
     i u64 := 0
     path_seen := false
-    while i < len(bytes) and p.limited == false {
+    while i < len(bytes) {
         delimiter := bytes[i] == 0
         if p.kind == 2 {
             if bytes[i] == 0 {
@@ -342,6 +331,7 @@ fn poll_picker(p *Picker) error {
             path_seen = false
             if lists::count<Item>(&p.items) >= 50000 {
                 p.limited = true
+                break
             }
         }
         i = i + 1

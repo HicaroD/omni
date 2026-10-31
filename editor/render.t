@@ -34,7 +34,7 @@ fn cursor_position(out *lists::List<u8>, x u64, y u64) error {
 }
 
 fn point(r *rope::Rope, at u64) (u32, u64) {
-    a := platform::widen(rope::byte(r, at))
+    a := widen<u32>(rope::byte(r, at))
     if a < 128 {
         return a, 1
     }
@@ -57,7 +57,7 @@ fn point(r *rope::Rope, at u64) (u32, u64) {
     }
     i u64 := 1
     while i < length {
-        b := platform::widen(rope::byte(r, at + i))
+        b := widen<u32>(rope::byte(r, at + i))
         if b < 128 or b > 191 {
             return 63, 1
         }

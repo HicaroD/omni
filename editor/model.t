@@ -92,9 +92,7 @@ fn buffer(app *App) *Buffer {
 }
 
 fn new_pane() (*Pane, error) {
-    data := memory::alloc(sizeof<Pane>()) @catch err {
-        return nil, err
-    }
+    data := memory::alloc(sizeof<Pane>()) @try
     values := slice_from_raw<Pane>(data, 1)
     values[0] = zero<Pane>()
     return &values[0], nil
@@ -116,6 +114,9 @@ fn free_edit(e *Edit) {
 }
 
 fn free_buffer(b *Buffer) {
+    if b == nil {
+        return
+    }
     edits := lists::view<Edit>(&b.history)
     i u64 := 0
     while i < len(edits) {
@@ -164,16 +165,13 @@ fn open_buffer(app *App, path string) error {
     items := lists::view<*Buffer>(&app.buffers)
     i u64 := 0
     while i < len(items) {
-        existing := items[i]
-        if strings::view(&existing.path) == name {
+        if strings::view(&items[i].path) == name {
             app.opened = true
             return switch_buffer(app, i)
         }
         i = i + 1
     }
-    cpath := strings::to_c(name) @catch err {
-        return err
-    }
+    cpath := strings::to_c(name) @try
     defer strings::free_c(&cpath)
     data rawptr := nil
     length u64 := 0
@@ -186,26 +184,16 @@ fn open_buffer(app *App, path string) error {
         app.message = "Cannot open file"
         return nil
     }
-    storage := memory::alloc(sizeof<Buffer>()) @catch err {
-        return err
-    }
+    storage := memory::alloc(sizeof<Buffer>()) @try
     values := slice_from_raw<Buffer>(storage, 1)
     values[0] = zero<Buffer>()
     b := &values[0]
+    defer free_buffer(b)
     b.stamp = platform::stamp(strings::c_view(&cpath))
-    owned_path := strings::clone(name) @catch err {
-        free_buffer(b)
-        return err
-    }
-    b.path = owned_path
-    rope::replace(&b.text, 0, 0, slice_from_raw<u8>(data, length)) @catch err {
-        free_buffer(b)
-        return err
-    }
-    lists::append<*Buffer>(&app.buffers, b) @catch err {
-        free_buffer(b)
-        return err
-    }
+    b.path = strings::clone(name) @try
+    rope::replace(&b.text, 0, 0, slice_from_raw<u8>(data, length)) @try
+    lists::append<*Buffer>(&app.buffers, b) @try
+    memory::take<*Buffer>(&b)
     app.message = ""
     app.opened = true
     return switch_buffer(app, lists::count<*Buffer>(&app.buffers) - 1)
@@ -234,9 +222,7 @@ fn save_buffer(app *App, path string) error {
             return nil
         }
     }
-    c := strings::to_c(name) @catch err {
-        return err
-    }
+    c := strings::to_c(name) @try
     defer strings::free_c(&c)
     current_stamp := platform::stamp(strings::c_view(&c))
     same := name == strings::view(&b.path)
@@ -244,17 +230,14 @@ fn save_buffer(app *App, path string) error {
         app.message = "Save refused: file changed on disk or destination already exists"
         return nil
     }
-    bytes := rope::copy(&b.text, 0, rope::size(b.text.root)) @catch err {
-        return err
-    }
+    bytes := rope::copy(&b.text, 0, rope::size(b.text.root)) @try
     defer lists::free<u8>(&bytes)
     if platform::save(strings::c_view(&c), slice_data<u8>(lists::view<u8>(&bytes)), lists::count<u8>(&bytes)) != 0 {
         app.message = "Save failed; original file was not truncated"
         return nil
     }
     strings::free(&b.path)
-    b.path = new_name
-    new_name = zero<strings::Owned>()
+    b.path = memory::take<strings::Owned>(&new_name)
     b.saved = b.revision
     b.stamp = platform::stamp(strings::c_view(&c))
     app.message = "Written"
@@ -297,33 +280,22 @@ fn edit(app *App, start u64, end u64, data u8[]) error {
     if start == end and len(data) == 0 {
         return nil
     }
-    before := rope::copy(&b.text, start, end) @catch err {
-        return err
-    }
+    before := rope::copy(&b.text, start, end) @try
+    defer lists::free<u8>(&before)
     after := lists::create<u8>()
-    lists::append_slice<u8>(&after, data) @catch err {
-        lists::free<u8>(&before)
-        return err
-    }
-    lists::reserve<Edit>(&b.history, lists::count<Edit>(&b.history) + 1) @catch err {
-        lists::free<u8>(&before)
-        lists::free<u8>(&after)
-        return err
-    }
-    rope::replace(&b.text, start, end, data) @catch err {
-        lists::free<u8>(&before)
-        lists::free<u8>(&after)
-        return err
-    }
+    defer lists::free<u8>(&after)
+    lists::append_slice<u8>(&after, data) @try
+    lists::reserve<Edit>(&b.history, lists::count<Edit>(&b.history) + 1) @try
+    rope::replace(&b.text, start, end, data) @try
     while lists::count<Edit>(&b.history) > b.history_at {
         old, found := lists::pop<Edit>(&b.history)
         free_edit(&old)
     }
     b.serial = b.serial + 1
-    record := Edit{start: start, before: before, after: after, previous: b.revision, revision: b.serial, group: app.group}
-    lists::append<Edit>(&b.history, record) @catch err {
-        return err
-    }
+    record := Edit{start: start, before: memory::take<lists::List<u8>>(&before), after: memory::take<lists::List<u8>>(&after), previous: b.revision, revision: b.serial, group: app.group}
+    defer free_edit(&record)
+    lists::append<Edit>(&b.history, record) @try
+    memory::take<Edit>(&record)
     b.history_at = b.history_at + 1
     b.revision = b.serial
     adjust(app.root, app.active.buffer, start, end, len(data))
@@ -338,45 +310,35 @@ fn undo(app *App, redo bool) error {
         if b.history_at == len(records) {
             return nil
         }
-        first_record := &records[b.history_at]
-        group := first_record.group
-        more := true
-        while b.history_at < len(records) and more {
+        group := records[b.history_at].group
+        while b.history_at < len(records) {
             e := &records[b.history_at]
             if e.group != group {
-                more = false
-            } else {
-            end := e.start + lists::count<u8>(&e.before)
-            rope::replace(&b.text, e.start, end, lists::view<u8>(&e.after)) @catch err {
-                return err
+                break
             }
+            end := e.start + lists::count<u8>(&e.before)
+            rope::replace(&b.text, e.start, end, lists::view<u8>(&e.after)) @try
             adjust(app.root, app.active.buffer, e.start, end, lists::count<u8>(&e.after))
             app.active.cursor = e.start + lists::count<u8>(&e.after)
             b.revision = e.revision
             b.history_at = b.history_at + 1
-            }
         }
     } else {
         if b.history_at == 0 {
             return nil
         }
-        last_record := &records[b.history_at - 1]
-        undo_group := last_record.group
-        more_undo := true
-        while b.history_at > 0 and more_undo {
+        undo_group := records[b.history_at - 1].group
+        while b.history_at > 0 {
             e2 := &records[b.history_at - 1]
             if e2.group != undo_group {
-                more_undo = false
-            } else {
-            end2 := e2.start + lists::count<u8>(&e2.after)
-            rope::replace(&b.text, e2.start, end2, lists::view<u8>(&e2.before)) @catch err {
-                return err
+                break
             }
+            end2 := e2.start + lists::count<u8>(&e2.after)
+            rope::replace(&b.text, e2.start, end2, lists::view<u8>(&e2.before)) @try
             adjust(app.root, app.active.buffer, e2.start, end2, lists::count<u8>(&e2.before))
             app.active.cursor = e2.start
             b.revision = e2.previous
             b.history_at = b.history_at - 1
-            }
         }
     }
     return nil
@@ -471,8 +433,7 @@ fn split_pane(app *App, vertical bool) error {
     a.cursor = p.cursor
     a.top = p.top
     a.left = p.left
-    a.positions = p.positions
-    p.positions = zero<lists::List<Position>>()
+    a.positions = memory::take<lists::List<Position>>(&p.positions)
     b.buffer = p.buffer
     b.previous = p.previous
     b.cursor = p.cursor
@@ -536,8 +497,7 @@ fn close_pane(app *App, force bool) {
     parent.cursor = sibling.cursor
     parent.top = sibling.top
     parent.left = sibling.left
-    parent.positions = sibling.positions
-    sibling.positions = zero<lists::List<Position>>()
+    parent.positions = memory::take<lists::List<Position>>(&sibling.positions)
     parent.parent = grand
     if parent.first != nil {
         parent.first.parent = parent

@@ -57,9 +57,7 @@ fn arrow(app *App, direction u8) error {
 fn finish_paste(app *App) error {
     if app.mode == 1 and app.picker.kind == 0 {
         app.group = app.group + 1
-        edit(app, app.active.cursor, app.active.cursor, lists::view<u8>(&app.paste_data)) @catch err {
-            return err
-        }
+        edit(app, app.active.cursor, app.active.cursor, lists::view<u8>(&app.paste_data)) @try
         app.group = app.group + 1
     } else {
         app.message = "Paste ignored outside Insert mode"
@@ -70,12 +68,9 @@ fn finish_paste(app *App) error {
 }
 
 fn decode(app *App, expired bool) error {
-    waiting := false
-    while lists::count<u8>(&app.input) > app.input_at and waiting == false and app.quit == false {
+    while lists::count<u8>(&app.input) > app.input_at and app.quit == false {
         all := lists::view<u8>(&app.input)
-        bytes := all[app.input_at:len(all)] @catch err {
-            return err
-        }
+        bytes := all[app.input_at:len(all)] @try
         first := bytes[0]
         if app.paste {
             if first == 27 {
@@ -85,70 +80,57 @@ fn decode(app *App, expired bool) error {
                 while i < min(len(bytes), 6) {
                     if bytes[i] != marker[i] {
                         same = false
+                        break
                     }
                     i = i + 1
                 }
                 if same and len(bytes) < 6 {
-                    waiting = true
+                    break
                 } elif same {
                     consume(app, 6)
-                    finish_paste(app) @catch err {
-                        return err
-                    }
+                    finish_paste(app) @try
                 } else {
-                    lists::append<u8>(&app.paste_data, first) @catch err {
-                        return err
-                    }
+                    lists::append<u8>(&app.paste_data, first) @try
                     consume(app, 1)
                 }
             } else {
-                lists::append<u8>(&app.paste_data, first) @catch err {
-                    return err
-                }
+                lists::append<u8>(&app.paste_data, first) @try
                 consume(app, 1)
             }
         } elif first == 27 {
             if len(bytes) == 1 {
                 if expired {
-                    key(app, 27) @catch err {
-                        return err
-                    }
+                    key(app, 27) @try
                     consume(app, 1)
                 } else {
-                    waiting = true
+                    break
                 }
-            } elif byte_at(bytes, 1) == 91 or byte_at(bytes, 1) == 79 {
+            } elif bytes[1] == 91 or bytes[1] == 79 {
                 end u64 := 2
-                while end < len(bytes) and (byte_at(bytes, end) < 64 or byte_at(bytes, end) > 126) {
+                while end < len(bytes) and (bytes[end] < 64 or bytes[end] > 126) {
                     end = end + 1
                 }
                 if end == len(bytes) {
                     if len(bytes) > 64 or expired {
                         consume(app, len(bytes))
                     } else {
-                        waiting = true
+                        break
                     }
                 } else {
-                    if end == 5 and byte_at(bytes, 2) == 50 and byte_at(bytes, 3) == 48 and byte_at(bytes, 4) == 48 and byte_at(bytes, 5) == 126 {
+                    if end == 5 and bytes[2] == 50 and bytes[3] == 48 and bytes[4] == 48 and bytes[5] == 126 {
                         app.paste = true
                         lists::clear<u8>(&app.paste_data)
                     } else {
-                        arrow(app, bytes[end]) @catch err {
-                            return err
-                        }
+                        arrow(app, bytes[end]) @try
                     }
                     consume(app, end + 1)
                 }
             } else {
-                key(app, 27) @catch err {
-                    return err
-                }
+                key(app, 27) @try
                 consume(app, 1)
             }
         } else {
-            key(app, first) @catch err {
-                return err
-            }
+            key(app, first) @try
             consume(app, 1)
         }
     }
