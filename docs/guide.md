@@ -1,11 +1,11 @@
 # Omni guide
 
-A keyboard-driven terminal editor written in **Telia v0.3.0**. Vim-inspired,
+A keyboard-driven terminal editor written in **[Telia v0.3.0](https://github.com/HicaroD/Telia)**. Vim-inspired,
 not Vim-compatible. Currently targets macOS.
 
 ## Build and run
 
-Requires Telia v0.3.0, Xcode command-line tools, and [ripgrep](https://github.com/BurntSushi/ripgrep)
+Requires [Telia v0.3.0](https://github.com/HicaroD/Telia), Xcode command-line tools, and [ripgrep](https://github.com/BurntSushi/ripgrep)
 (`rg` on `PATH`). Python 3 is needed only for the test suite.
 
 ```sh
