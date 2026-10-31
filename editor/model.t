@@ -371,11 +371,59 @@ fn line_end(r *rope::Rope, at u64) u64 {
     return rope::line_start(r, line + 1) - 1
 }
 
+fn insert_newline(app *App, at u64) error {
+    b := buffer(app)
+    start := rope::line_start(&b.text, rope::line_at(&b.text, at))
+    end := start
+    while end < at and (rope::byte(&b.text, end) == 32 or rope::byte(&b.text, end) == 9) {
+        end = end + 1
+    }
+    data := lists::create<u8>()
+    defer lists::free<u8>(&data)
+    lists::append<u8>(&data, 10) @try
+    indent := rope::copy(&b.text, start, end) @try
+    defer lists::free<u8>(&indent)
+    lists::append_slice<u8>(&data, lists::view<u8>(&indent)) @try
+    return edit(app, at, at, lists::view<u8>(&data))
+}
+
+fn word_class(byte u8) u8 {
+    if byte == 32 or (byte >= 9 and byte <= 13) {
+        return 0
+    }
+    if (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 95 or byte >= 128 {
+        return 1
+    }
+    return 2
+}
+
 fn move(app *App, key u8) {
     b := buffer(app)
     p := app.active
     line := rope::line_at(&b.text, p.cursor)
     start := rope::line_start(&b.text, line)
+    if key == 119 {
+        size := rope::size(b.text.root)
+        if p.cursor >= size {
+            return
+        }
+        kind := word_class(rope::byte(&b.text, p.cursor))
+        if kind == 0 {
+            p.cursor = next_point(&b.text, p.cursor)
+        }
+        while kind != 0 and p.cursor < size and word_class(rope::byte(&b.text, p.cursor)) == kind {
+            p.cursor = next_point(&b.text, p.cursor)
+        }
+        while p.cursor < size and word_class(rope::byte(&b.text, p.cursor)) == 0 {
+            if rope::byte(&b.text, p.cursor) == 10 and (p.cursor == 0 or rope::byte(&b.text, p.cursor - 1) == 10) {
+                break
+            }
+            p.cursor = next_point(&b.text, p.cursor)
+        }
+        if p.cursor == size and size > 0 {
+            p.cursor = previous_point(&b.text, size)
+        }
+    }
     if key == 104 and p.cursor > start {
         p.cursor = previous_point(&b.text, p.cursor)
     }

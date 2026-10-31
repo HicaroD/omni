@@ -160,6 +160,30 @@ class TerminalTests(unittest.TestCase):
         self.assertTrue(restored[3] & termios.ICANON)
         self.assertTrue(restored[3] & termios.ISIG)
 
+    def test_word_motion_and_dollar_position_inserted_text(self):
+        path = self.root / "words.t"
+        path.write_text("café_name...next\nlast")
+        e = self.start("words.t")
+        e.send("wwiX")
+        e.send(b"\x1b")
+        e.send("$a!")
+        e.send(b"\x1b")
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(path.read_text(), "café_name...Xnext!\nlast")
+
+    def test_open_line_and_enter_preserve_indentation_through_undo_redo(self):
+        path = self.root / "indent.t"
+        path.write_text(" \t  first\nnext")
+        e = self.start("indent.t")
+        e.send("osecond\rthird")
+        e.send(b"\x1b")
+        e.send("u")
+        e.send(b"\x12")
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(path.read_text(), " \t  first\n \t  second\n \t  third\nnext")
+
     def test_undo_redo_and_dirty_guard(self):
         (self.root / "file.t").write_text("original\n")
         e = self.start("file.t")

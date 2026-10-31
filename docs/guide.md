@@ -28,6 +28,7 @@ compiler or standard-library modifications are required.
 | Keys | Action |
 | --- | --- |
 | `h j k l`, arrows | Move left/down/up/right |
+| `w` | Move to the start of the next word |
 | `0`, `$`, `gg`, `G` | Line start/end, first/last line |
 | `i`, `a`, `o` | Insert before cursor, append, open a line below |
 | `Esc`, `Ctrl-c` | Return to Normal mode / cancel prompt or picker |
@@ -41,6 +42,14 @@ compiler or standard-library modifications are required.
 Insert mode accepts text, Enter, Tab, Backspace, and arrows. Bracketed paste is
 inserted literally as one undo unit, including newlines and command-like text.
 It is ignored outside Insert mode. An Insert session is grouped for undo.
+
+`o` and Insert-mode Enter copy the line's leading spaces and tabs onto the new
+line, placing the cursor after the indentation. Enter within indentation copies
+only the prefix before the cursor. No language-specific indentation is added.
+
+`w` distinguishes keyword runs (letters, digits, underscores, and non-ASCII
+characters) from punctuation runs. It skips whitespace across lines, stops on
+empty lines, and stays on a UTF-8 character boundary at the end of the buffer.
 
 Search wraps and uses ASCII smart case: queries with uppercase ASCII letters
 match case-sensitively. No regex support for in-buffer search yet.

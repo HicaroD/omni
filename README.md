@@ -30,6 +30,7 @@ The launch directory is the project root unless you pass `--root`.
 | Keys | Action |
 | --- | --- |
 | `h j k l`, arrows | Move |
+| `w`, `$` | Next word, line end |
 | `i`, `a`, `o` | Enter Insert mode |
 | `Esc` | Return to Normal mode / cancel |
 | `x`, `dd`, `yy`, `p` | Delete character, delete line, yank line, paste |

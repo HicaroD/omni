@@ -488,8 +488,7 @@ fn key(app *App, byte u8) error {
                 return edit(app, previous_point(&b.text, at), at, empty)
             }
         } elif byte == 13 or byte == 10 {
-            newline u8[1] := .{10}
-            return edit(app, at, at, newline[:])
+            return insert_newline(app, at)
         } elif byte == 9 or byte >= 32 {
             single u8[1] := .{byte}
             return edit(app, at, at, single[:])
@@ -523,7 +522,7 @@ fn key(app *App, byte u8) error {
         }
         return nil
     }
-    if byte == 104 or byte == 106 or byte == 107 or byte == 108 or byte == 48 or byte == 36 or byte == 71 {
+    if byte == 104 or byte == 106 or byte == 107 or byte == 108 or byte == 48 or byte == 36 or byte == 71 or byte == 119 {
         move(app, byte)
     } elif byte == 103 or byte == 100 or byte == 121 or byte == 23 {
         app.pending = byte
@@ -535,8 +534,7 @@ fn key(app *App, byte u8) error {
         }
         if byte == 111 {
             end2 := line_end(&b.text, at)
-            newline2 u8[1] := .{10}
-            edit(app, end2, end2, newline2[:]) @catch err {
+            insert_newline(app, end2) @catch err {
                 return err
             }
         }
