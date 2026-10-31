@@ -19,4 +19,7 @@ int32_t omni_poll(void *process, void *buffer, uint64_t capacity, uint64_t *coun
 void omni_cancel(void *process);
 int32_t omni_copy(void *data, uint64_t length);
 int32_t omni_paste(void **data, uint64_t *length);
+int32_t omni_match_open(void *query, uint64_t length, bool regex, bool sensitive, bool word, void **handle);
+int32_t omni_match_next(void *handle, void *text, uint64_t length, uint64_t offset, void *replacement, uint64_t replacement_length, uint64_t *start, uint64_t *end, void **after, uint64_t *after_length);
+void omni_match_close(void *handle);
 #endif

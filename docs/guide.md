@@ -69,6 +69,7 @@ after the first space is the path, so paths containing spaces do not need quotes
 | `:buffers` (`:ls`), `:bd` | Buffer picker; close current saved buffer |
 | `:split [path]`, `:vsplit [path]` | Horizontal/vertical split |
 | `:files`, `:grep [query]` | File finder / project-text search |
+| `:replace`, `:replace-project` | Open the buffer / project find-and-replace panel |
 | `:copy` | Copy the local yank register to macOS using `pbcopy` |
 | `:paste` | Insert macOS clipboard contents at cursor using `pbpaste` |
 | `:help` | Short command reminder |
@@ -109,6 +110,60 @@ File discovery and search respect ripgrep's ignore rules by default. `.git`
 directories remain excluded even with hidden/ignored files enabled. Search reads
 **files on disk**, not unsaved buffers. Buffer previews use live text.
 
+### Find and replace
+
+Use `:replace` for the current buffer, including unnamed buffers, or
+`:replace-project` for the project. The panel remembers its fields and matching
+options. Buffer matches update as you type; project changes require an explicit
+**Review** before applying. Matches are highlighted in the buffer and listed with
+before/after previews. Project matches are grouped by file.
+
+| Panel keys | Action |
+| --- | --- |
+| Tab | Switch between Find and With fields |
+| Backspace | Remove the last character in the active field |
+| `Ctrl-s` | Toggle Buffer / Project scope |
+| `Ctrl-r`, `Ctrl-t`, `Ctrl-w` | Toggle regex, case-sensitive, whole-word matching |
+| `Ctrl-j` / `Ctrl-k`, down / up | Next / previous match, wrapping at the ends |
+| `Ctrl-x`, `Ctrl-f` | Include/exclude the current match / all matches in its file |
+| `Ctrl-h`, `Ctrl-o` | Include/exclude hidden / ignored project files |
+| Enter, `Ctrl-g` | Review / refresh matches |
+| `Ctrl-y` | Replace the current included match |
+| `Ctrl-a` | Replace all included matches / Apply selected project matches |
+| Esc, `Ctrl-c` | Close the panel; already-applied edits remain |
+
+Matching is literal and case-insensitive by default. Unlike `/` search, the panel
+uses an explicit case toggle, not smart case. Whole-word boundaries recognize
+Unicode letters, numbers, combining marks, and underscores. Regex mode uses
+macOS's **ICU regex syntax** consistently in both replacement scopes; it is
+independent of the existing ripgrep search picker's regex toggle.
+
+Regex replacements support `$1`, `$2`, `${name}`, and `$$` for a literal dollar
+sign (`$0` inserts the complete match). Unknown capture references block applying.
+Replacement fields interpret `\n`, `\t`, and `\\` as newline, tab, and backslash;
+other backslash sequences remain literal. Dollar signs have no special meaning
+in literal mode. Bracketed paste works in both fields, including actual newlines
+in replacements. Previews show newlines and tabs as `\n` and `\t`. Matches never
+cross an LF line boundary, even with regex dotall enabled. A nonempty query is
+required; zero-length regex matches advance by a whole UTF-8 character.
+
+Project review discovers files using ripgrep's ignore rules, always excluding
+`.git`. For discovered files already open, it uses **live buffer text**, including
+unsaved edits. Other files are read from disk; unopened files containing NUL bytes
+are skipped. Unnamed buffers and files absent from discovery are not project
+targets. Review retains at most 50,000 files and 50,000 matches; exceeding a limit
+blocks applying rather than silently replacing a partial result set. Discovery
+runs asynchronously; matching runs in small file batches, but a large individual
+file can still pause interaction. Regex execution has time and stack limits.
+
+Applying opens affected files as buffers and leaves **all changes unsaved**. Save
+each buffer explicitly with `:w`. Each operation is one undo step per affected
+buffer; there is no project-wide undo. Existing split cursors adjust with edits.
+Before editing, all selected targets are checked against their review snapshots;
+changed text, missing files, or changed filesystem metadata require another
+review. These checks do not lock files or eliminate concurrent-write races.
+The panel requires at least 40 columns and 12 rows.
+
 ## File safety and text handling
 
 - Saves use a same-directory temporary file, `fsync`, and rename, preserving Unix
@@ -140,8 +195,10 @@ editor/input.t            streaming key/escape/paste decoder
 editor/render.t           terminal-cell layout and batched rendering
 editor/screen.t           row cache, changed-row writes, cursor/sync state
 editor/picker.t           fuzzy ranking, incremental rg results, previews
+editor/replace.t          find/replace panel, review snapshots, selected edits
 editor/session.t          terminal lifecycle, CLI, event loop
 vendor/platform/          narrow macOS file/process/width/argv ABI adapter
+vendor/platform/search.c  system ICU regex and replacement-capture adapter
 *_test.t                  native Telia rope/editor unit tests
 tests/                    real-PTY integration tests and sanitizer tooling
 ```

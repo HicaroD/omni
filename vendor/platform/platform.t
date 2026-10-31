@@ -4,6 +4,12 @@ use "std::ffi::c"
 
 @[header="platform.h", default_cc="c"]
 extern {
+    @[link_name="omni_match_open"]
+    fn match_open(query rawptr, length u64, regex bool, sensitive bool, word bool, handle *rawptr) i32
+    @[link_name="omni_match_next"]
+    fn match_next(handle rawptr, text rawptr, length u64, offset u64, replacement rawptr, replacement_length u64, start *u64, end *u64, after *rawptr, after_length *u64) i32
+    @[link_name="omni_match_close"]
+    fn match_close(handle rawptr)
     @[link_name="omni_path"]
     fn path(path c::ConstCString, resolved *rawptr) i32
     @[link_name="omni_stamp"]

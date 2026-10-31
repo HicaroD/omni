@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory(prefix="omni-sanitize-") as temp:
         raise SystemExit(f"The {sanitizers} runtime hangs on this host; no sanitizer tests were run.")
     for target in manifest["targets"].values():
         target["compile_flags"] = flags
-        target["link_flags"] = flags
+        target["link_flags"] = target.get("link_flags", []) + flags
     (package / "native.json").write_text(json.dumps(manifest))
     env = dict(os.environ, T_VENDOR_PATH=str(work / "vendor"), UBSAN_OPTIONS="halt_on_error=1")
     compiler = os.environ.get("TELIA", "telia")

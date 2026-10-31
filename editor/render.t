@@ -107,13 +107,31 @@ fn spaces(out *lists::List<u8>, count u64) error {
 }
 
 fn draw_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64) error {
+    return draw_matched_line(out, r, start, left, width, zero<Replacement[]>())
+}
+
+fn draw_matched_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64, matches Replacement[]) error {
     at := start
     column u64 := 0
     drawn u64 := 0
+    match_index u64 := 0
+    highlighted := false
     while at < rope::size(r.root) and rope::byte(r, at) != 10 and column < left + width {
         cp, count := point(r, at)
         cells := cell_width(cp, column)
         if column >= left and column + cells <= left + width {
+            while match_index < len(matches) and matches[match_index].end <= at {
+                match_index = match_index + 1
+            }
+            mark := match_index < len(matches) and matches[match_index].start <= at and at < matches[match_index].end
+            if mark != highlighted {
+                if mark {
+                    csi(out, "7m") @try
+                } else {
+                    csi(out, "0m") @try
+                }
+                highlighted = mark
+            }
             if cp == 9 {
                 spaces(out, cells) @catch err {
                     return err
@@ -148,6 +166,9 @@ fn draw_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64
         column = column + cells
         at = at + count
     }
+    if highlighted {
+        csi(out, "0m") @try
+    }
     if drawn < width {
         return spaces(out, width - drawn)
     }
@@ -172,6 +193,12 @@ fn overlay_row(app *App, y u64) bool {
 }
 
 fn pane_line(app *App, r *rope::Rope, start u64, left u64, width u64) error {
+    if app.replace.open and app.replace.project == false and app.replace.ready {
+        b := buffer(app)
+        if r == &b.text {
+            return draw_matched_line(&app.frame, r, start, left, width, lists::view<Replacement>(&app.replace.hits))
+        }
+    }
     if overlay_row(app, app.render_y) == false {
         return draw_line(&app.frame, r, start, left, width)
     }
@@ -529,7 +556,11 @@ fn draw(app *App, output *terminal::Handle) error {
     begin_rows(app, width, height) @catch err {
         return err
     }
-    layout(app.root, 0, 0, width, height - 1)
+    pane_height := height - 1
+    if app.replace.open and width >= 40 and height >= 12 {
+        pane_height = height / 2
+    }
+    layout(app.root, 0, 0, width, pane_height)
     draw_pane(app, app.root) @catch err {
         return err
     }
@@ -583,6 +614,9 @@ fn draw(app *App, output *terminal::Handle) error {
                 app.cursor_visible = true
             }
         }
+    }
+    if app.replace.open {
+        draw_replace(app, width, height) @try
     }
     return flush_rows(app, output)
 }
