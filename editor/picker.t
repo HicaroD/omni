@@ -20,6 +20,7 @@ struct Match {
 }
 
 struct Picker {
+    changed bool
     kind i32
     process rawptr
     items lists::List<Item>
@@ -304,12 +305,14 @@ fn add_record(p *Picker, bytes u8[]) error {
 }
 
 fn poll_picker(p *Picker) error {
+    p.changed = false
     if p.process == nil {
         return nil
     }
     chunk := zero<u8[8192]>()
     count u64 := 0
     status := platform::poll(p.process, slice_data<u8>(chunk[:]), 8192, &count)
+    before := lists::count<Item>(&p.items)
     incoming := chunk[0:count] @catch err {
         return err
     }
@@ -353,11 +356,13 @@ fn poll_picker(p *Picker) error {
         lists::pop<u8>(&p.pending)
     }
     if status != 0 or p.limited or remaining > 1048576 {
+        p.changed = true
         p.failed = status < 0
         platform::cancel(p.process)
         p.process = nil
     }
-    if count > 0 {
+    if lists::count<Item>(&p.items) != before {
+        p.changed = true
         return filter_picker(p)
     }
     return nil

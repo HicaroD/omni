@@ -30,6 +30,7 @@ fn run() error {
         argument = argument + 1
     }
     app := zero<App>()
+    app.sync_updates = sync_supported()
     defer free_app(&app)
     root := new_pane() @catch err {
         return err
@@ -76,6 +77,7 @@ fn run() error {
     defer terminal::send_control(&output, terminal::Control{kind: terminal::ControlKind::BracketedPaste}, &caps)
     defer terminal::send_control(&output, terminal::Control{kind: terminal::ControlKind::CursorVisible, enabled: true}, &caps)
     defer terminal::send_control(&output, terminal::Control{kind: terminal::ControlKind::ResetStyle}, &caps)
+    defer end_updates(&output, app.sync_updates)
     draw(&app, &output) @catch err {
         return err
     }
@@ -102,11 +104,10 @@ fn run() error {
         decode(&app, event.timed_out) @catch err {
             return err
         }
-        busy := app.picker.process != nil
         poll_picker(&app.picker) @catch err {
             return err
         }
-        if event.input or event.resized or busy or had_pending {
+        if event.input or event.resized or app.picker.changed or had_pending {
             if app.quit == false {
                 draw(&app, &output) @catch err {
                     return err

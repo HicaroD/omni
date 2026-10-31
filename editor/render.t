@@ -17,7 +17,7 @@ fn csi(out *lists::List<u8>, suffix string) error {
     return append_text(out, suffix)
 }
 
-fn position(out *lists::List<u8>, x u64, y u64) error {
+fn cursor_position(out *lists::List<u8>, x u64, y u64) error {
     csi(out, "") @catch err {
         return err
     }
@@ -167,6 +167,51 @@ fn label(out *lists::List<u8>, text string, width u64) error {
     return draw_line(out, &temp, 0, 0, width)
 }
 
+fn overlay_row(app *App, y u64) bool {
+    return app.picker.kind != 0 and app.screen_width >= 30 and app.screen_height >= 10 and y >= 1 and y < app.screen_height - 2
+}
+
+fn pane_line(app *App, r *rope::Rope, start u64, left u64, width u64) error {
+    if overlay_row(app, app.render_y) == false {
+        return draw_line(&app.frame, r, start, left, width)
+    }
+    x := app.render_x
+    y := app.render_y
+    prefix u64 := 0
+    if x < 2 {
+        prefix = min(2 - x, width)
+    }
+    if prefix > 0 {
+        draw_line(&app.frame, r, start, left, prefix) @catch err {
+            return err
+        }
+    }
+    suffix := app.screen_width - 2
+    if suffix < x {
+        suffix = x
+    }
+    if suffix < x + width {
+        position(app, suffix, y) @catch err {
+            return err
+        }
+        return draw_line(&app.frame, r, start, left + suffix - x, x + width - suffix)
+    }
+    return nil
+}
+
+fn pane_label(app *App, text string, width u64) error {
+    bytes := text_bytes(text) @catch err {
+        return err
+    }
+    defer lists::free<u8>(&bytes)
+    temp := zero<rope::Rope>()
+    defer rope::free(&temp)
+    rope::replace(&temp, 0, 0, lists::view<u8>(&bytes)) @catch err {
+        return err
+    }
+    return pane_line(app, &temp, 0, 0, width)
+}
+
 fn layout(p *Pane, x u64, y u64, width u64, height u64) {
     p.x = x
     p.y = y
@@ -204,12 +249,15 @@ fn draw_pane(app *App, p *Pane) error {
         if p.vertical {
             i u64 := 0
             while i < p.height {
-                position(&app.frame, p.second.x - 1, p.y + i) @catch err {
+              covered := overlay_row(app, p.y + i) and p.second.x - 1 >= 2 and p.second.x - 1 < app.screen_width - 2
+              if covered == false {
+                position(app, p.second.x - 1, p.y + i) @catch err {
                     return err
                 }
                 append_text(&app.frame, "|") @catch err {
                     return err
                 }
+              }
                 i = i + 1
             }
         }
@@ -235,22 +283,22 @@ fn draw_pane(app *App, p *Pane) error {
     }
     row u64 := 0
     while row < rows {
-        position(&app.frame, p.x, p.y + row) @catch err {
+        position(app, p.x, p.y + row) @catch err {
             return err
         }
         if p.top + row <= rope::breaks(b.text.root) {
             start := rope::line_start(&b.text, p.top + row)
-            draw_line(&app.frame, &b.text, start, p.left, p.width) @catch err {
+            pane_line(app, &b.text, start, p.left, p.width) @catch err {
                 return err
             }
         } else {
-            label(&app.frame, "~", p.width) @catch err {
+            pane_label(app, "~", p.width) @catch err {
                 return err
             }
         }
         row = row + 1
     }
-    position(&app.frame, p.x, p.y + rows) @catch err {
+    position(app, p.x, p.y + rows) @catch err {
         return err
     }
     csi(&app.frame, "7m") @catch err {
@@ -303,7 +351,7 @@ fn draw_pane(app *App, p *Pane) error {
         return err
     }
     defer strings::free(&status_text)
-    label(&app.frame, strings::view(&status_text), p.width) @catch err {
+    pane_label(app, strings::view(&status_text), p.width) @catch err {
         return err
     }
     return csi(&app.frame, "0m")
@@ -351,7 +399,7 @@ fn draw_picker(app *App, width u64, height u64) error {
     y u64 := 1
     w := width - 4
     h := height - 3
-    position(&app.frame, x, y) @catch err {
+    position(app, x, y) @catch err {
         return err
     }
     csi(&app.frame, "7m") @catch err {
@@ -370,7 +418,7 @@ fn draw_picker(app *App, width u64, height u64) error {
     csi(&app.frame, "0m") @catch err {
         return err
     }
-    position(&app.frame, x, y + 1) @catch err {
+    position(app, x, y + 1) @catch err {
         return err
     }
     query := lists::create<u8>()
@@ -398,7 +446,7 @@ fn draw_picker(app *App, width u64, height u64) error {
     list_width := w / 2
     row u64 := 0
     while row < rows {
-        position(&app.frame, x, y + row + 2) @catch err {
+        position(app, x, y + row + 2) @catch err {
             return err
         }
         index := top + row
@@ -443,7 +491,7 @@ fn draw_picker(app *App, width u64, height u64) error {
         }
         row = row + 1
     }
-    position(&app.frame, x, y + h - 1) @catch err {
+    position(app, x, y + h - 1) @catch err {
         return err
     }
     footer := "Literal / smart case"
@@ -475,20 +523,17 @@ fn draw(app *App, output *terminal::Handle) error {
     width := min(size.columns, 65535)
     height := min(size.rows, 65535)
     if width < 8 or height < 4 {
+        app.screen_width = 0
         return nil
     }
-    lists::clear<u8>(&app.frame)
-    csi(&app.frame, "?25l") @catch err {
-        return err
-    }
-    csi(&app.frame, "2J") @catch err {
+    begin_rows(app, width, height) @catch err {
         return err
     }
     layout(app.root, 0, 0, width, height - 1)
     draw_pane(app, app.root) @catch err {
         return err
     }
-    position(&app.frame, 0, height - 1) @catch err {
+    position(app, 0, height - 1) @catch err {
         return err
     }
     if app.mode == 2 or app.mode == 3 {
@@ -525,22 +570,19 @@ fn draw(app *App, output *terminal::Handle) error {
     } else {
         p := app.active
         if app.mode == 2 or app.mode == 3 {
-            position(&app.frame, min(1 + lists::count<u8>(&app.prompt), width - 1), height - 1) @catch err {
-                return err
-            }
+            app.cursor_x = min(1 + lists::count<u8>(&app.prompt), width - 1)
+            app.cursor_y = height - 1
+            app.cursor_visible = true
         } else {
             b := buffer(app)
             line := rope::line_at(&b.text, p.cursor)
             col := display_column(&b.text, rope::line_start(&b.text, line), p.cursor)
             if p.width > 0 and p.height > 1 {
-                position(&app.frame, p.x + min(col - p.left, p.width - 1), p.y + min(line - p.top, p.height - 2)) @catch err {
-                    return err
-                }
+                app.cursor_x = p.x + min(col - p.left, p.width - 1)
+                app.cursor_y = p.y + min(line - p.top, p.height - 2)
+                app.cursor_visible = true
             }
         }
-        csi(&app.frame, "?25h") @catch err {
-            return err
-        }
     }
-    return terminal::write_all(output, lists::view<u8>(&app.frame))
+    return flush_rows(app, output)
 }

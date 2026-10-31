@@ -129,6 +129,7 @@ editor/model.t            buffers, edit history, views, split ownership
 editor/commands.t         modal commands, navigation, search, clipboard
 editor/input.t            streaming key/escape/paste decoder
 editor/render.t           terminal-cell layout and batched rendering
+editor/screen.t           row cache, changed-row writes, cursor/sync state
 editor/picker.t           fuzzy ranking, incremental rg results, previews
 editor/session.t          terminal lifecycle, CLI, event loop
 vendor/platform/          narrow macOS file/process/width/argv ABI adapter
@@ -168,17 +169,27 @@ This is an initial implementation, not a production replacement for Neovim.
   most the first MiB. Individual search records larger than a MiB stop the scan.
 - File loading/saving, preview loading, in-buffer search, and clipboard commands
   are synchronous. Large documents and long lines still need performance work.
-- Redraws batch a full frame rather than diffing terminal cells. Filename fuzzy
-  matching is byte-based and folds ASCII case only.
+- Changed rows are repainted as units rather than diffing individual cells;
+  frame composition still visits the viewport. Filename fuzzy matching is
+  byte-based and folds ASCII case only.
 - Undo history is unbounded until a buffer is closed. There is no crash recovery,
   swap file, background autosave, external reload command, or signal cleanup hook.
 - Only macOS is configured; local verification is on Apple Silicon. Intel macOS
   has a native manifest entry but has not been tested here.
 
+Rendering caches rows and writes only rows whose content changed; ordinary
+updates never clear the screen. Picker overlays mask covered document content
+instead of repainting it underneath the picker. Cursor visibility changes only
+when opening/closing an overlay or when a view cannot display the cursor.
+Synchronized updates are enabled automatically for Kitty, Ghostty, and WezTerm
+outside tmux. Set `OMNI_SYNC_UPDATES=1` to enable them explicitly or `0` to disable
+them. Other terminals use ordinary batched updates without relying on this
+extension.
+
 ## Verification
 
 ```sh
-make test                   # debug build, randomized rope checks, 19 PTY tests
+make test                   # debug build, randomized rope checks, 26 PTY tests
 make test-release           # repeat with optimized builds
 make sanitize               # UndefinedBehaviorSanitizer, including generated C
 OMNI_SANITIZERS=address,undefined make sanitize

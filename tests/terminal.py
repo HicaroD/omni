@@ -11,16 +11,20 @@ import termios
 import time
 import unittest
 import subprocess
+import re
+import unicodedata
 
 BINARY = Path(os.environ.get("OMNI_BINARY", Path(__file__).resolve().parents[1] / "bin" / "omni")).resolve()
 
 
 class Editor:
-    def __init__(self, root, *files):
+    def __init__(self, root, *files, env=None):
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.chdir(root)
             os.environ["TERM"] = "xterm-256color"
+            os.environ["OMNI_SYNC_UPDATES"] = "0"
+            os.environ.update(env or {})
             os.execv(str(BINARY), [str(BINARY), *files])
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 26, 100, 0, 0))
         os.set_blocking(self.fd, False)
@@ -87,6 +91,45 @@ class Editor:
         os.close(self.fd)
 
 
+def screen_snapshot(output, width=100, height=26):
+    """Small ANSI screen model for visual regression checks, including styles."""
+    cells = [[(" ", False) for _ in range(width)] for _ in range(height)]
+    text = output.decode("utf-8", errors="replace")
+    x = y = 0
+    reverse = wrap = False
+    i = 0
+    while i < len(text):
+        if text[i] == "\x1b":
+            control = re.match(r"\x1b\[([0-9;?]*)([A-Za-z~])", text[i:])
+            if not control:
+                raise AssertionError(f"unrecognized terminal sequence: {text[i:i + 30]!r}")
+            args, kind = control.groups()
+            if kind == "H":
+                row, column = (int(part) for part in args.split(";"))
+                y, x, wrap = row - 1, column - 1, False
+            elif kind == "m":
+                reverse = args == "7"
+            elif kind == "J" and args == "2":
+                raise AssertionError("ordinary rendering must not clear the screen")
+            i += len(control.group())
+            continue
+        char = text[i]
+        if unicodedata.combining(char):
+            i += 1
+            continue
+        if wrap:
+            y, x, wrap = min(y + 1, height - 1), 0, False
+        if not (0 <= y < height and 0 <= x < width):
+            raise AssertionError(f"render outside viewport at {x}, {y}")
+        cells[y][x] = char, reverse
+        count = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        x += count
+        if x >= width:
+            x, wrap = width - 1, True
+        i += 1
+    return cells
+
+
 class TerminalTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="omni-tests-")
@@ -98,8 +141,8 @@ class TerminalTests(unittest.TestCase):
             self.editor.close()
         self.temp.cleanup()
 
-    def start(self, *files):
-        self.editor = Editor(self.root, *files)
+    def start(self, *files, env=None):
+        self.editor = Editor(self.root, *files, env=env)
         return self.editor
 
     def test_insert_save_and_terminal_cleanup(self):
@@ -334,6 +377,116 @@ class TerminalTests(unittest.TestCase):
         result = subprocess.run([str(BINARY), "--help"], capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0)
         self.assertIn(b"Usage: omni", result.stdout)
+
+    def test_redraw_changes_only_affected_rows_without_cursor_blink(self):
+        (self.root / "file.t").write_text("first line\nuntouched second line\n")
+        e = self.start("file.t")
+        self.assertNotIn(b"\x1b[2J", e.output)
+        e.output.clear()
+        e.send("iX")
+        self.assertIn(b"Xfirst line", e.output)
+        self.assertNotIn(b"untouched second line", e.output)
+        self.assertNotIn(b"\x1b[?25l", e.output)
+        self.assertNotIn(b"\x1b[?25h", e.output)
+        self.assertNotIn(b"\x1b[2J", e.output)
+        e.send(b"\x1b")
+        e.output.clear()
+        e.send("h")
+        self.assertNotIn(b"first line", e.output)
+        self.assertLess(len(e.output), 200)
+        e.send(":qa!\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_unchanged_input_and_idle_emit_no_frame(self):
+        e = self.start()
+        e.output.clear()
+        e.send("h")
+        self.assertEqual(e.output, b"")
+        e.read(0.2)
+        self.assertEqual(e.output, b"")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_picker_close_restores_screen_and_cursor_once(self):
+        (self.root / "file.t").write_text("original document\nsecond line\n")
+        e = self.start("file.t")
+        before = screen_snapshot(e.output)
+        mark = len(e.output)
+        e.send(b"\x10", 0.2)
+        e.send("file")
+        e.send(b"\x1b")
+        self.assertEqual(screen_snapshot(e.output), before)
+        changes = e.output[mark:]
+        self.assertEqual(changes.count(b"\x1b[?25l"), 1)
+        self.assertEqual(changes.count(b"\x1b[?25h"), 1)
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_split_close_erases_divider_and_restores_styles(self):
+        (self.root / "file.t").write_text("original document\nsecond line\n")
+        e = self.start("file.t")
+        before = screen_snapshot(e.output)
+        e.send(":vsplit\r")
+        split = screen_snapshot(e.output)
+        self.assertNotEqual(split, before)
+        self.assertIn(("|", False), split[0])
+        e.send(":q\r")
+        self.assertEqual(screen_snapshot(e.output), before)
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_resize_invalidates_rows_even_after_tiny_viewport(self):
+        (self.root / "file.t").write_text("original document\nsecond line\n")
+        e = self.start("file.t")
+        before = screen_snapshot(e.output)
+        fcntl.ioctl(e.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 45, 0, 0))
+        mark = len(e.output)
+        e.read(0.15)
+        smaller = screen_snapshot(e.output[mark:], 45, 15)
+        self.assertEqual("".join(char for char, _ in smaller[0]).rstrip(), "original document")
+        fcntl.ioctl(e.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 2, 2, 0, 0))
+        e.read(0.15)
+        mark = len(e.output)
+        fcntl.ioctl(e.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 26, 100, 0, 0))
+        e.read(0.15)
+        self.assertEqual(screen_snapshot(e.output[mark:]), before)
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_synchronized_updates_are_balanced_and_optional(self):
+        e = self.start(env={"OMNI_SYNC_UPDATES": "1"})
+        e.send("iX")
+        e.send(b"\x1b")
+        self.assertGreater(e.output.count(b"\x1b[?2026h"), 0)
+        self.assertEqual(e.output.count(b"\x1b[?2026h"), e.output.count(b"\x1b[?2026l"))
+        self.assertNotIn(b"\x1b[2J", e.output)
+        e.send(":qa!\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_waiting_picker_does_not_repaint_without_new_results(self):
+        (self.root / "file.t").write_text("preview\n")
+        tools = self.root / "tools"
+        tools.mkdir()
+        rg = tools / "rg"
+        rg.write_text("#!/bin/sh\nsleep 0.5\nprintf 'file.t\\0'\nsleep 0.3\n")
+        rg.chmod(0o755)
+        e = self.start(env={"PATH": str(tools) + os.pathsep + os.environ["PATH"]})
+        e.send(b"\x10")
+        e.output.clear()
+        e.read(0.15)
+        self.assertEqual(e.output, b"")
+        e.read(0.8)
+        self.assertIn(b"file.t", e.output)
+        deadline = time.monotonic() + 3
+        while b"Literal / smart case" not in e.output and time.monotonic() < deadline:
+            e.read(0.05)
+        self.assertIn(b"Literal / smart case", e.output)
+        e.output.clear()
+        e.read(0.15)
+        self.assertEqual(e.output, b"")
+        e.send(b"\x1b")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
 
 
 if __name__ == "__main__":

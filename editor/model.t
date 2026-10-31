@@ -71,6 +71,19 @@ struct App {
     paste bool
     paste_data lists::List<u8>
     frame lists::List<u8>
+    rows lists::List<RenderRow>
+    render_y u64
+    render_x u64
+    screen_width u64
+    screen_height u64
+    cursor_x u64
+    cursor_y u64
+    cursor_visible bool
+    last_cursor_x u64
+    last_cursor_y u64
+    cursor_shown bool
+    cursor_known bool
+    sync_updates bool
 }
 
 fn buffer(app *App) *Buffer {
@@ -129,6 +142,14 @@ fn free_app(app *App) {
     lists::free<u8>(&app.input)
     lists::free<u8>(&app.paste_data)
     lists::free<u8>(&app.frame)
+    rows := lists::view<RenderRow>(&app.rows)
+    i u64 := 0
+    while i < len(rows) {
+        row := &rows[i]
+        free_row(row)
+        i = i + 1
+    }
+    lists::free<RenderRow>(&app.rows)
 }
 
 fn open_buffer(app *App, path string) error {
