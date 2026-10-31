@@ -1,7 +1,8 @@
 # Publishing Omni releases
 
 The `Release` workflow builds Apple Silicon binaries using Telia v0.3.0 on
-`macos-14`, targeting macOS 14 or later. It runs native and terminal tests,
+`macos-15`, targeting macOS 14 or later via `MACOSX_DEPLOYMENT_TARGET=14.0`.
+It runs native and terminal tests,
 checks that the binary links only to macOS system libraries, ad-hoc signs it,
 and tests the packaged executable outside the checkout. No Telia runtime
 installation is needed by users. These binaries are not notarized by Apple.
