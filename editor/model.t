@@ -66,7 +66,6 @@ struct App {
     quit bool
     opened bool
     picker Picker
-    replace ReplacePanel
     input lists::List<u8>
     input_at u64
     paste bool
@@ -131,7 +130,6 @@ fn free_buffer(b *Buffer) {
 }
 
 fn free_app(app *App) {
-    free_replace(&app.replace)
     close_picker(&app.picker)
     items := lists::view<*Buffer>(&app.buffers)
     for b in items {
@@ -278,12 +276,7 @@ fn adjusted_cursor(cursor u64, start u64, end u64, added u64) u64 {
 }
 
 fn edit(app *App, start u64, end u64, data u8[]) error {
-    return splice_buffer(app, app.active.buffer, start, end, data, true)
-}
-
-fn splice_buffer(app *App, id u64, start u64, end u64, data u8[], move_cursor bool) error {
-    buffers := lists::view<*Buffer>(&app.buffers)
-    b := buffers[id]
+    b := buffer(app)
     if start == end and len(data) == 0 {
         return nil
     }
@@ -305,10 +298,8 @@ fn splice_buffer(app *App, id u64, start u64, end u64, data u8[], move_cursor bo
     memory::take<Edit>(&record)
     b.history_at = b.history_at + 1
     b.revision = b.serial
-    adjust(app.root, id, start, end, len(data))
-    if move_cursor and app.active.buffer == id {
-        app.active.cursor = start + len(data)
-    }
+    adjust(app.root, app.active.buffer, start, end, len(data))
+    app.active.cursor = start + len(data)
     return nil
 }
 

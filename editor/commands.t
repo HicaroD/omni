@@ -348,8 +348,6 @@ fn command(app *App) error {
         if arg != "" {
             return open_buffer(app, arg)
         }
-    } elif name == "replace" or name == "replace-project" {
-        return start_replace(app, name == "replace-project")
     } elif name == "files" {
         return start_picker(app, 1)
     } elif name == "grep" {
@@ -395,7 +393,7 @@ fn command(app *App) error {
         }
         app.message = "pbpaste failed"
     } elif name == "help" {
-        app.message = "i/a/o insert | u Ctrl-r | :e/w/q/files/grep/buffers/replace/replace-project | Ctrl-w splits"
+        app.message = "i/a/o insert | x dd yy p u Ctrl-r | :e/w/q/files/grep/buffers | Ctrl-w s/v/hjkl/c/=/< > + -"
     } else {
         if name != "" {
             app.message = "Unknown command; see :help or README.md"
@@ -417,9 +415,6 @@ fn pop_point(bytes *lists::List<u8>) {
 
 fn key(app *App, byte u8) error {
     if byte == 27 or byte == 3 {
-        app.replace.open = false
-        app.replace.reviewing = false
-        close_picker(&app.replace.discovery)
         if app.picker.kind != 0 {
             close_picker(&app.picker)
         }
@@ -427,9 +422,6 @@ fn key(app *App, byte u8) error {
         app.pending = 0
         app.group = app.group + 1
         return nil
-    }
-    if app.replace.open {
-        return replace_key(app, byte)
     }
     if app.picker.kind != 0 {
         p := &app.picker

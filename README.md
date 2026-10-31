@@ -9,7 +9,6 @@ Currently supports macOS. An early implementation, not a Neovim replacement.
 - Multiple buffers and nested horizontal/vertical splits.
 - Fuzzy file and buffer pickers with previews.
 - Project search powered by [ripgrep](https://github.com/BurntSushi/ripgrep).
-- Interactive buffer/project find and replace, with regex captures and reviewed changes.
 - Rope-based text storage and incremental terminal rendering.
 
 ## Install
@@ -71,7 +70,6 @@ The launch directory is the project root unless you pass `--root`.
 | `u`, `Ctrl-r` | Undo / redo |
 | `/`, `n`, `N` | Search, next match, previous match |
 | `Ctrl-p`, `Ctrl-f`, `Ctrl-b` | Find files, search project, switch buffers |
-| `:replace`, `:replace-project` | Find/replace in the buffer or review project replacements |
 | `:e path`, `:w`, `:w path` | Open, save, save as |
 | `:q`, `:wq`, `:qa` | Close, save and close, quit all |
 | `:split`, `:vsplit` | Split horizontally / vertically |

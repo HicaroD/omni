@@ -22,7 +22,7 @@ fn compact_input(app *App) {
 }
 
 fn arrow(app *App, direction u8) error {
-    if app.picker.kind != 0 or app.replace.open {
+    if app.picker.kind != 0 {
         if direction == 65 {
             return key(app, 11)
         }
@@ -55,14 +55,7 @@ fn arrow(app *App, direction u8) error {
 }
 
 fn finish_paste(app *App) error {
-    if app.replace.open {
-        field := &app.replace.query
-        if app.replace.field {
-            field = &app.replace.replacement
-        }
-        lists::append_slice<u8>(field, lists::view<u8>(&app.paste_data)) @try
-        refresh_replace(app) @try
-    } elif app.mode == 1 and app.picker.kind == 0 {
+    if app.mode == 1 and app.picker.kind == 0 {
         app.group = app.group + 1
         edit(app, app.active.cursor, app.active.cursor, lists::view<u8>(&app.paste_data)) @try
         app.group = app.group + 1

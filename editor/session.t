@@ -76,9 +76,7 @@ fn run() error {
         had_pending := lists::count<u8>(&app.input) > 0
         decode(&app, event.timed_out) @try
         poll_picker(&app.picker) @try
-        replacement_pending := app.replace.reviewing
-        poll_replace(&app) @try
-        if event.input or event.resized or app.picker.changed or had_pending or replacement_pending {
+        if event.input or event.resized or app.picker.changed or had_pending {
             if app.quit == false {
                 draw(&app, &output) @try
             }
