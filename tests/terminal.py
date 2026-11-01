@@ -438,6 +438,80 @@ class TerminalTests(unittest.TestCase):
         self.assertEqual(e.wait(), 0)
         self.assertEqual((self.root / "unicode.t").read_bytes(), payload)
 
+    def test_file_picker_skips_binary_preview_but_can_open_file(self):
+        payload = b"BINARY_CONTENT\n\x00data\n"
+        (self.root / "binary.dat").write_bytes(payload)
+        e = self.start()
+        e.send(b"\x10")
+        e.send("binary.dat", 0.2)
+        e.expect(b"binary.dat")
+        self.assertNotIn(b"BINARY_CONTENT", e.output)
+        e.send(b"\r")
+        e.expect(b"BINARY_CONTENT")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "binary.dat").read_bytes(), payload)
+
+    def test_file_picker_skips_non_ascii_previews(self):
+        fixtures = {
+            "unicode.txt": "UNICODE_CONTENT\ncafé 界 😀\n".encode(),
+            "invalid.dat": b"INVALID_CONTENT\n\xff\xc0\n",
+        }
+        for name, payload in fixtures.items():
+            (self.root / name).write_bytes(payload)
+        e = self.start()
+        for name, payload in fixtures.items():
+            with self.subTest(name=name):
+                e.send(b"\x10")
+                e.send(name, 0.2)
+                e.expect(b"Literal / smart case")
+                self.assertNotIn(payload.split(b"\n")[0], e.output)
+            e.send(b"\x1b")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_file_picker_skips_control_byte_previews(self):
+        controls = (1, 8, 11, 12, 14, 27, 31, 127)
+        for byte in controls:
+            (self.root / f"control-{byte}.dat").write_bytes(
+                f"CONTROL_CONTENT_{byte}\n".encode() + bytes([byte]) + b"\n"
+            )
+        e = self.start()
+        for byte in controls:
+            with self.subTest(byte=byte):
+                e.send(b"\x10")
+                e.send(f"control-{byte}.dat", 0.2)
+                e.expect(b"Literal / smart case")
+                self.assertNotIn(f"CONTROL_CONTENT_{byte}".encode(), e.output)
+            e.send(b"\x1b")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_file_picker_previews_ascii_and_clears_it_for_binary_selection(self):
+        (self.root / "ascii.txt").write_bytes(
+            b"ASCII_CONTENT\n" + bytes(range(32, 127)) + b"\n\tINDENTED\r\nLAST\n"
+        )
+        (self.root / "binary.dat").write_bytes(b"BINARY_CONTENT\n\x00\n")
+        e = self.start()
+        e.send(b"\x10")
+        e.send("ascii.txt", 0.2)
+        e.expect(b"ASCII_CONTENT")
+        e.expect(b"INDENTED")
+        e.expect(b"LAST")
+        e.send(b"\x7f" * len("ascii.txt") + b"binary.dat", 0.2)
+        screen = screen_snapshot(e.output)
+        rows = ["".join(char for char, _ in row) for row in screen]
+        self.assertIn("binary.dat", rows[3])
+        for row in rows[3:23]:
+            self.assertEqual(row[51:98].strip(), "")
+        self.assertNotIn(b"BINARY_CONTENT", e.output)
+        e.send(b"\x7f" * len("binary.dat") + b"ascii.txt", 0.2)
+        screen = screen_snapshot(e.output)
+        self.assertIn("ASCII_CONTENT", "".join(char for char, _ in screen[3]))
+        e.send(b"\x1b")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
     def test_file_picker_and_project_search(self):
         (self.root / "target.t").write_text("needle\nsecond\n")
         (self.root / "other.t").write_text("other\n")

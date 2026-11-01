@@ -441,6 +441,11 @@ fn preview(app *App) error {
     defer strings::free(&data)
     bytes := strings::to_bytes(strings::view(&data)) @try
     defer lists::free<u8>(&bytes)
+    for byte in lists::view<u8>(&bytes) {
+        if byte >= ByteDelete or (byte < ByteSpace and byte != ByteTab and byte != ByteLF and byte != ByteCR) {
+            return nil
+        }
+    }
     return rope::replace(&p.preview, 0, 0, lists::view<u8>(&bytes))
 }
 
