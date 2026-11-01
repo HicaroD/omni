@@ -27,9 +27,7 @@ fn switch_buffer(app *App, id u64) error {
         i = i + 1
     }
     if saved == false {
-        lists::append<Position>(&p.positions, Position{buffer: p.buffer, cursor: p.cursor, top: p.top, left: p.left}) @catch err {
-            return err
-        }
+        lists::append<Position>(&p.positions, Position{buffer: p.buffer, cursor: p.cursor, top: p.top, left: p.left}) @try
     }
     app.active.previous = app.active.buffer
     app.active.buffer = id
