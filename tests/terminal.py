@@ -139,6 +139,78 @@ def screen_snapshot(output, width=100, height=26):
 
 
 class TerminalTests(unittest.TestCase):
+    def test_visual_highlight_is_confined_to_active_split_and_clears_after_yank(self):
+        (self.root / "split.txt").write_text("abcd\nefgh")
+        e = self.start("split.txt")
+        e.send(":vsplit\rvl")
+        screen = screen_snapshot(e.output)
+        self.assertFalse(any(reverse for _, reverse in screen[0][:49]))
+        self.assertEqual([reverse for _, reverse in screen[0][50:54]], [True, True, False, False])
+        e.send("y")
+        screen = screen_snapshot(e.output)
+        self.assertFalse(any(reverse for _, reverse in screen[0]))
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_moving_during_block_insert_cancels_replication(self):
+        (self.root / "block.txt").write_text("abcd\nefgh")
+        e = self.start("block.txt")
+        e.send(b"l\x16jI!\x1b[C\x1b")
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "block.txt").read_text(), "a!bcd\nefgh")
+
+    def test_block_change_with_bracketed_paste_is_one_undo_unit(self):
+        original = "abcd\nefgh\nijkl"
+        (self.root / "block.txt").write_text(original)
+        e = self.start("block.txt")
+        e.send(b"l\x16ljjc\x1b[200~XY\x1b[201~\x1b")
+        e.send(":w\r")
+        self.assertEqual((self.root / "block.txt").read_text(), "aXYd\neXYh\niXYl")
+        e.send("u:w\r")
+        self.assertEqual((self.root / "block.txt").read_text(), original)
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_visual_block_highlights_only_selected_tab_cells(self):
+        (self.root / "tabs.txt").write_text("abcd\n\tZ\nefgh")
+        e = self.start("tabs.txt")
+        e.send(b"ll\x16jj")
+        screen = screen_snapshot(e.output)
+        self.assertEqual([reverse for _, reverse in screen[1][:5]], [False, False, True, False, False])
+        e.send(b"\x1b:qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_visual_block_highlights_columns_and_arrows_extend_selection(self):
+        (self.root / "block.txt").write_text("abcd\nefgh\nijkl")
+        e = self.start("block.txt")
+        e.send(b"l\x16l\x1b[B\x1b[B")
+        screen = screen_snapshot(e.output)
+        for row in screen[:3]:
+            self.assertEqual([reverse for _, reverse in row[:4]], [False, True, True, False])
+        self.assertIn(b"VISUAL BLOCK", e.output)
+        e.send("d:w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "block.txt").read_text(), "ad\neh\nil")
+
+    def test_visual_selection_highlights_and_clears_without_changing_text(self):
+        (self.root / "visual.txt").write_text("abcd\nefgh\n")
+        e = self.start("visual.txt")
+        e.send("lvl")
+        screen = screen_snapshot(e.output)
+        self.assertEqual([reverse for _, reverse in screen[0][:4]], [False, True, True, False])
+        self.assertIn(b"VISUAL", e.output)
+        e.send(b"\x1b")
+        screen = screen_snapshot(e.output)
+        self.assertFalse(any(reverse for _, reverse in screen[0]))
+        e.send("Vj")
+        screen = screen_snapshot(e.output)
+        self.assertTrue(all(reverse for _, reverse in screen[0]))
+        self.assertTrue(all(reverse for _, reverse in screen[1]))
+        e.send(b"\x1b:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "visual.txt").read_text(), "abcd\nefgh\n")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="omni-tests-")
         self.root = Path(self.temp.name)

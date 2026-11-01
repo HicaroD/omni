@@ -5,7 +5,7 @@ Currently supports macOS. An early implementation, not a Neovim replacement.
 
 ## Features
 
-- Normal and Insert modes, undo/redo, and search.
+- Normal, Insert, and character/line/block Visual modes, undo/redo, and search.
 - Multiple buffers and nested horizontal/vertical splits.
 - Fuzzy file and buffer pickers with previews.
 - Project search powered by [ripgrep](https://github.com/BurntSushi/ripgrep).
@@ -65,6 +65,8 @@ The launch directory is the project root unless you pass `--root`.
 | `h j k l`, arrows | Move |
 | `w`, `$` | Next word, line end |
 | `i`, `a`, `o` | Enter Insert mode |
+| `v`, `V`, `Ctrl-v` | Select characters, whole lines, or a rectangle |
+| Visual `d`, `y`, `c`, `p` | Delete, yank, change, or replace selection |
 | `Esc` | Return to Normal mode / cancel |
 | `x`, `dd`, `yy`, `p` | Delete character, delete line, yank line, paste |
 | `u`, `Ctrl-r` | Undo / redo |

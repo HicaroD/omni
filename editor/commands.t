@@ -83,9 +83,9 @@ fn focus_candidate(p *Pane, current *Pane, direction u8, best **Pane, distance *
     } else {
         dy = cy - py
     }
-    valid := (direction == 104 and px < cx) or (direction == 108 and px > cx) or (direction == 106 and py > cy) or (direction == 107 and py < cy)
+    valid := (direction == KeyLowerH and px < cx) or (direction == KeyLowerL and px > cx) or (direction == KeyLowerJ and py > cy) or (direction == KeyLowerK and py < cy)
     score := dx + dy * 4
-    if direction == 104 or direction == 108 {
+    if direction == KeyLowerH or direction == KeyLowerL {
         score = dx * 4 + dy
     }
     if valid and score < *distance {
@@ -95,30 +95,30 @@ fn focus_candidate(p *Pane, current *Pane, direction u8, best **Pane, distance *
 }
 
 fn window_key(app *App, key u8) error {
-    if key == 118 {
+    if key == KeyLowerV {
         return split_pane(app, true)
     }
-    if key == 115 {
+    if key == KeyLowerS {
         return split_pane(app, false)
     }
-    if key == 99 {
+    if key == KeyLowerC {
         close_pane(app, false)
         return nil
     }
-    if key == 61 {
+    if key == KeyEqual {
         equalize(app.root)
         return nil
     }
-    if key == 104 or key == 106 or key == 107 or key == 108 {
+    if key == KeyLowerH or key == KeyLowerJ or key == KeyLowerK or key == KeyLowerL {
         best := app.active
         distance u64 := 18446744073709551615
         focus_candidate(app.root, app.active, key, &best, &distance)
         app.active = best
         return nil
     }
-    if key == 43 or key == 45 or key == 62 or key == 60 {
+    if key == KeyPlus or key == KeyMinus or key == KeyGreater or key == KeyLess {
         p := app.active.parent
-        vertical := key == 62 or key == 60
+        vertical := key == KeyGreater or key == KeyLess
         while p != nil and p.vertical != vertical {
             p = p.parent
         }
@@ -127,7 +127,7 @@ fn window_key(app *App, key u8) error {
             while first.parent != p {
                 first = first.parent
             }
-            grow := key == 43 or key == 62
+            grow := key == KeyPlus or key == KeyGreater
             increase := grow == (first == p.first)
             if increase and p.ratio < 90 {
                 p.ratio = p.ratio + 5
@@ -150,7 +150,7 @@ fn find(app *App, reverse bool) {
     }
     sensitive := false
     for byte in query {
-        if byte >= 65 and byte <= 90 {
+        if byte >= AsciiUpperFirst and byte <= AsciiUpperLast {
             sensitive = true
         }
     }
@@ -197,29 +197,50 @@ fn yank(app *App, start u64, end u64, linewise bool) error {
     }
     lists::free<u8>(&app.clipboard)
     app.clipboard = copied
-    app.linewise = linewise
+    app.register_kind = RegisterKind::Characterwise
+    app.block_width = 0
+    if linewise {
+        app.register_kind = RegisterKind::Linewise
+    }
     app.message = "Yanked"
     return nil
 }
 
 fn paste_clipboard(app *App) error {
+    return paste_register(app, lists::view<u8>(&app.clipboard), app.register_kind, app.block_width)
+}
+
+fn paste_register(app *App, bytes u8[], kind RegisterKind, width u64) error {
     b := buffer(app)
     at := app.active.cursor
-    bytes := lists::view<u8>(&app.clipboard)
-    if len(bytes) == 0 {
+    if len(bytes) == 0 and kind == RegisterKind::Characterwise {
         return nil
     }
-    if app.linewise {
+    if kind == RegisterKind::Blockwise {
+        line := rope::line_at(&b.text, at)
+        if at < line_end(&b.text, at) {
+            at = next_point(&b.text, at)
+        }
+        return put_block(app, bytes, line, cursor_column(&b.text, at), width)
+    }
+    if kind == RegisterKind::Linewise {
         at = line_end(&b.text, at)
+        if len(bytes) == 0 {
+            if at < rope::size(b.text.root) {
+                at = at + 1
+            }
+            newline u8[1] := .{ByteLF}
+            return edit(app, at, at, newline[:])
+        }
         if at < rope::size(b.text.root) {
             at = at + 1
-            if bytes[len(bytes) - 1] != 10 {
+            if bytes[len(bytes) - 1] != ByteLF {
                 complete := lists::create<u8>()
                 defer lists::free<u8>(&complete)
                 lists::append_slice<u8>(&complete, bytes) @catch err {
                     return err
                 }
-                lists::append<u8>(&complete, 10) @catch err {
+                lists::append<u8>(&complete, ByteLF) @catch err {
                     return err
                 }
                 return edit(app, at, at, lists::view<u8>(&complete))
@@ -227,13 +248,13 @@ fn paste_clipboard(app *App) error {
         } else {
             insert := lists::create<u8>()
             defer lists::free<u8>(&insert)
-            lists::append<u8>(&insert, 10) @catch err {
+            lists::append<u8>(&insert, ByteLF) @catch err {
                 return err
             }
             lists::append_slice<u8>(&insert, bytes) @catch err {
                 return err
             }
-            if bytes[len(bytes) - 1] == 10 {
+            if bytes[len(bytes) - 1] == ByteLF {
                 lists::pop<u8>(&insert)
             }
             return edit(app, at, at, lists::view<u8>(&insert))
@@ -348,9 +369,9 @@ fn command(app *App) error {
             return open_buffer(app, arg)
         }
     } elif name == "files" {
-        return start_picker(app, 1)
+        return start_picker(app, PickerKind::Files)
     } elif name == "grep" {
-        start_picker(app, 2) @catch err {
+        start_picker(app, PickerKind::ProjectSearch) @catch err {
             return err
         }
         append_text(&app.picker.query, arg) @catch err {
@@ -358,7 +379,7 @@ fn command(app *App) error {
         }
         return restart_picker(&app.picker)
     } elif name == "buffers" or name == "ls" {
-        return start_picker(app, 3)
+        return start_picker(app, PickerKind::Buffers)
     } elif name == "bn" or name == "bnext" {
         id := app.active.buffer + 1
         if id >= lists::count<*Buffer>(&app.buffers) {
@@ -391,7 +412,7 @@ fn command(app *App) error {
         }
         app.message = "pbpaste failed"
     } elif name == "help" {
-        app.message = "i/a/o insert | x dd yy p u Ctrl-r | :e/w/q/files/grep/buffers | Ctrl-w s/v/hjkl/c/=/< > + -"
+        app.message = "v/V/Ctrl-v select | d/y/c/p selection | i/a/o insert | u Ctrl-r | :e/w/q/files/grep/buffers"
     } else {
         if name != "" {
             app.message = "Unknown command; see :help or README.md"
@@ -405,47 +426,54 @@ fn pop_point(bytes *lists::List<u8>) {
         return
     }
     b, found := lists::pop<u8>(bytes)
-    while b >= 128 and b < 192 and lists::count<u8>(bytes) > 0 {
+    while b >= Utf8ContinuationFirst and b < Utf8ContinuationLimit and lists::count<u8>(bytes) > 0 {
         previous, exists := lists::pop<u8>(bytes)
         b = previous
     }
 }
 
 fn key(app *App, byte u8) error {
-    if byte == 27 or byte == 3 {
-        if app.picker.kind != 0 {
+    if byte == KeyEscape or byte == KeyCtrlC {
+        if app.block_insert {
+            if byte == KeyEscape {
+                finish_block_insert(app) @try
+            } else {
+                cancel_block_insert(app)
+            }
+        }
+        if app.picker.kind != PickerKind::None {
             close_picker(&app.picker)
         }
-        app.mode = 0
+        app.mode = Mode::Normal
         app.pending = 0
         app.group = app.group + 1
         return nil
     }
-    if app.picker.kind != 0 {
+    if app.picker.kind != PickerKind::None {
         p := &app.picker
-        if byte == 13 {
+        if byte == KeyEnter {
             return accept_picker(app)
-        } elif byte == 10 or byte == 11 {
+        } elif byte == KeyCtrlJ or byte == KeyCtrlK {
             count := lists::count<Match>(&p.matches)
-            if byte == 10 and p.selected + 1 < count {
+            if byte == KeyCtrlJ and p.selected + 1 < count {
                 p.selected = p.selected + 1
             }
-            if byte == 11 and p.selected > 0 {
+            if byte == KeyCtrlK and p.selected > 0 {
                 p.selected = p.selected - 1
             }
-        } elif byte == 8 and p.kind != 3 {
+        } elif byte == KeyBackspace and p.kind != PickerKind::Buffers {
             p.hidden = p.hidden == false
             return restart_picker(p)
-        } elif byte == 18 and p.kind == 2 {
+        } elif byte == KeyCtrlR and p.kind == PickerKind::ProjectSearch {
             p.regex = p.regex == false
             return restart_picker(p)
-        } elif byte == 9 and p.kind != 3 {
+        } elif byte == KeyTab and p.kind != PickerKind::Buffers {
             p.ignored = p.ignored == false
             return restart_picker(p)
-        } elif byte == 127 {
+        } elif byte == KeyDelete {
             pop_point(&p.query)
             return picker_changed(p)
-        } elif byte >= 32 {
+        } elif byte >= ByteSpace {
             lists::append<u8>(&p.query, byte) @catch err {
                 return err
             }
@@ -453,11 +481,11 @@ fn key(app *App, byte u8) error {
         }
         return nil
     }
-    if app.mode == 2 or app.mode == 3 {
-        if byte == 13 {
+    if app.mode == Mode::Command or app.mode == Mode::Search {
+        if byte == KeyEnter {
             mode := app.mode
-            app.mode = 0
-            if mode == 2 {
+            app.mode = Mode::Normal
+            if mode == Mode::Command {
                 app.group = app.group + 1
                 return command(app)
             }
@@ -468,9 +496,15 @@ fn key(app *App, byte u8) error {
                 }
             }
             find(app, false)
-        } elif byte == 127 or byte == 8 {
+            app.mode = app.search_mode
+            app.search_mode = Mode::Normal
+            if app.mode == Mode::VisualBlock {
+                app.visual_column = cursor_column(&buffer(app).text, app.active.cursor)
+                app.visual_wanted = app.visual_column
+            }
+        } elif byte == KeyDelete or byte == KeyBackspace {
             pop_point(&app.prompt)
-        } elif byte >= 32 {
+        } elif byte >= ByteSpace {
             lists::append<u8>(&app.prompt, byte) @catch err {
                 return err
             }
@@ -479,32 +513,61 @@ fn key(app *App, byte u8) error {
     }
     b := buffer(app)
     at := app.active.cursor
-    if app.mode == 1 {
-        if byte == 127 or byte == 8 {
+    if app.mode == Mode::Insert {
+        if byte == KeyDelete or byte == KeyBackspace {
+            if app.block_insert and at <= app.block_insert_start {
+                cancel_block_insert(app)
+            }
             if at > 0 {
                 empty := zero<u8[]>()
                 return edit(app, previous_point(&b.text, at), at, empty)
             }
-        } elif byte == 13 or byte == 10 {
+        } elif byte == KeyEnter or byte == KeyCtrlJ {
             return insert_newline(app, at)
-        } elif byte == 9 or byte >= 32 {
+        } elif byte == KeyTab or byte >= ByteSpace {
             single u8[1] := .{byte}
             return edit(app, at, at, single[:])
         }
         return nil
     }
     app.message = ""
-    if app.pending == 23 {
+    if app.pending == KeyCtrlW {
         app.pending = 0
         return window_key(app, byte)
+    }
+    if byte == KeyUpperV or byte == KeyLowerV or byte == KeyCtrlV {
+        target := Mode::VisualCharacter
+        if byte == KeyUpperV {
+            target = Mode::VisualLine
+        }
+        if byte == KeyCtrlV {
+            target = Mode::VisualBlock
+        }
+        if app.mode == target {
+            app.mode = Mode::Normal
+        } else {
+            if visual(app) == false {
+                app.visual_anchor = at
+            }
+            app.mode = target
+            app.visual_column = cursor_column(&b.text, at)
+            app.visual_wanted = app.visual_column
+            app.visual_anchor_column = cursor_column(&b.text, app.visual_anchor)
+            app.visual_eol = false
+        }
+        app.pending = 0
+        return nil
+    }
+    if visual(app) {
+        return visual_key(app, byte)
     }
     if app.pending != 0 {
         previous := app.pending
         app.pending = 0
-        if previous == 103 and byte == 103 {
+        if previous == KeyLowerG and byte == KeyLowerG {
             app.active.cursor = 0
         }
-        if (previous == 100 and byte == 100) or (previous == 121 and byte == 121) {
+        if (previous == KeyLowerD and byte == KeyLowerD) or (previous == KeyLowerY and byte == KeyLowerY) {
             start := rope::line_start(&b.text, rope::line_at(&b.text, at))
             end := line_end(&b.text, at)
             if end < rope::size(b.text.root) {
@@ -513,30 +576,30 @@ fn key(app *App, byte u8) error {
             yank(app, start, end, true) @catch err {
                 return err
             }
-            if previous == 100 {
+            if previous == KeyLowerD {
                 app.group = app.group + 1
                 return edit(app, start, end, zero<u8[]>())
             }
         }
         return nil
     }
-    if byte == 104 or byte == 106 or byte == 107 or byte == 108 or byte == 48 or byte == 36 or byte == 71 or byte == 119 {
+    if byte == KeyLowerH or byte == KeyLowerJ or byte == KeyLowerK or byte == KeyLowerL or byte == KeyZero or byte == KeyDollar or byte == KeyUpperG or byte == KeyLowerW {
         move(app, byte)
-    } elif byte == 103 or byte == 100 or byte == 121 or byte == 23 {
+    } elif byte == KeyLowerG or byte == KeyLowerD or byte == KeyLowerY or byte == KeyCtrlW {
         app.pending = byte
-    } elif byte == 105 or byte == 97 or byte == 111 {
-        app.mode = 1
+    } elif byte == KeyLowerI or byte == KeyLowerA or byte == KeyLowerO {
+        app.mode = Mode::Insert
         app.group = app.group + 1
-        if byte == 97 and at < line_end(&b.text, at) {
+        if byte == KeyLowerA and at < line_end(&b.text, at) {
             app.active.cursor = next_point(&b.text, at)
         }
-        if byte == 111 {
+        if byte == KeyLowerO {
             end2 := line_end(&b.text, at)
             insert_newline(app, end2) @catch err {
                 return err
             }
         }
-    } elif byte == 120 {
+    } elif byte == KeyLowerX {
         if at < line_end(&b.text, at) {
             app.group = app.group + 1
             yank(app, at, next_point(&b.text, at), false) @catch err {
@@ -544,26 +607,27 @@ fn key(app *App, byte u8) error {
             }
             return edit(app, at, next_point(&b.text, at), zero<u8[]>())
         }
-    } elif byte == 112 {
+    } elif byte == KeyLowerP {
         app.group = app.group + 1
         return paste_clipboard(app)
-    } elif byte == 117 or byte == 18 {
-        return undo(app, byte == 18)
-    } elif byte == 58 or byte == 47 {
-        app.mode = 2
-        if byte == 47 {
-            app.mode = 3
+    } elif byte == KeyLowerU or byte == KeyCtrlR {
+        return undo(app, byte == KeyCtrlR)
+    } elif byte == KeyColon or byte == KeySlash {
+        app.mode = Mode::Command
+        if byte == KeySlash {
+            app.mode = Mode::Search
+            app.search_mode = Mode::Normal
         }
         lists::clear<u8>(&app.prompt)
-    } elif byte == 110 or byte == 78 {
-        find(app, byte == 78)
-    } elif byte == 16 {
-        return start_picker(app, 1)
-    } elif byte == 2 {
-        return start_picker(app, 3)
-    } elif byte == 6 {
-        return start_picker(app, 2)
-    } elif byte == 30 {
+    } elif byte == KeyLowerN or byte == KeyUpperN {
+        find(app, byte == KeyUpperN)
+    } elif byte == KeyCtrlP {
+        return start_picker(app, PickerKind::Files)
+    } elif byte == KeyCtrlB {
+        return start_picker(app, PickerKind::Buffers)
+    } elif byte == KeyCtrlF {
+        return start_picker(app, PickerKind::ProjectSearch)
+    } elif byte == KeyCtrlCaret {
         return switch_buffer(app, app.active.previous)
     }
     return nil

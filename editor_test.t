@@ -56,6 +56,511 @@ fn assert_editor_text(app *editor::App, expected string) error {
     return nil
 }
 
+fn press(app *editor::App, keys string) error {
+    bytes := editor::text_bytes(keys) @try
+    defer lists::free<u8>(&bytes)
+    for byte in lists::view<u8>(&bytes) {
+        editor::key(app, byte) @try
+    }
+    return nil
+}
+
+test "Visual line delete removes three lines and undoes as one edit" {
+    testing::assert(visual_lines() == nil)
+}
+
+fn visual_lines() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\ntwo\nthree\nfour") @try
+    press(&app, "Vjjd") @try
+    assert_editor_text(&app, "four") @try
+    testing::assert(app.mode == editor::Mode::Normal)
+    press(&app, "u") @try
+    return assert_editor_text(&app, "one\ntwo\nthree\nfour")
+}
+
+test "Visual characters include both endpoints in reversed Unicode selections" {
+    testing::assert(visual_characters() == nil)
+}
+
+fn visual_characters() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "aé界z") @try
+    press(&app, "llvhd") @try
+    assert_editor_text(&app, "az") @try
+    press(&app, "u") @try
+    assert_editor_text(&app, "aé界z") @try
+    press(&app, "v") @try
+    editor::key(&app, 27) @try
+    return assert_editor_text(&app, "aé界z")
+}
+
+test "Visual change and inserted replacement undo together" {
+    testing::assert(visual_change() == nil)
+}
+
+fn visual_change() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abc def") @try
+    press(&app, "vllcXYZ") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "XYZ def") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "abc def")
+}
+
+test "Visual endpoint swap and mode switching preserve the selection anchor" {
+    testing::assert(visual_endpoints() == nil)
+}
+
+fn visual_endpoints() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nijkl") @try
+    press(&app, "lvlohd") @try
+    assert_editor_text(&app, "d\nefgh\nijkl") @try
+    press(&app, "uVjvd") @try
+    return assert_editor_text(&app, "fgh\nijkl")
+}
+
+test "Visual line deletion at EOF removes the preceding separator but yanks only the line" {
+    testing::assert(visual_last_line() == nil)
+}
+
+fn visual_last_line() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\ntwo") @try
+    press(&app, "jVdp") @try
+    return assert_editor_text(&app, "one\ntwo")
+}
+
+test "Visual deleting the last terminated line preserves the previous line terminator" {
+    testing::assert(visual_terminated_line() == nil)
+}
+
+fn visual_terminated_line() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\ntwo\n") @try
+    press(&app, "jVd") @try
+    return assert_editor_text(&app, "one\n")
+}
+
+test "Visual line change leaves the following line separate" {
+    testing::assert(visual_line_change() == nil)
+}
+
+fn visual_line_change() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\ntwo\nthree") @try
+    press(&app, "VjcNEW") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "NEW\nthree") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "one\ntwo\nthree")
+}
+
+test "Visual paste replaces selected text and stores the replaced text for the next paste" {
+    testing::assert(visual_put() == nil)
+}
+
+fn visual_put() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abc XYZ") @try
+    press(&app, "vllywvllp") @try
+    assert_editor_text(&app, "abc abc") @try
+    press(&app, "p") @try
+    assert_editor_text(&app, "abc abcXYZ") @try
+    press(&app, "uu") @try
+    return assert_editor_text(&app, "abc XYZ")
+}
+
+test "Visual block delete removes columns without joining lines and undoes together" {
+    testing::assert(visual_block_delete() == nil)
+}
+
+fn visual_block_delete() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nijkl") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "ljjd") @try
+    assert_editor_text(&app, "ad\neh\nil") @try
+    press(&app, "u") @try
+    assert_editor_text(&app, "abcd\nefgh\nijkl") @try
+    editor::key(&app, 18) @try
+    return assert_editor_text(&app, "ad\neh\nil")
+}
+
+test "Visual block retains columns across short lines and splits partially selected tabs" {
+    testing::assert(visual_block_columns() == nil)
+}
+
+fn visual_block_columns() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nx\n\tZ\n界ab") @try
+    press(&app, "ll") @try
+    editor::key(&app, 22) @try
+    press(&app, "jjjd") @try
+    assert_editor_text(&app, "abd\nx\n   Z\n界b") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "abcd\nx\n\tZ\n界ab")
+}
+
+test "Block yank pastes rows at the same column and pads short lines" {
+    testing::assert(visual_block_put() == nil)
+}
+
+fn visual_block_put() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nx") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "ljyjjp") @try
+    assert_editor_text(&app, "abcd\nefgh\nxbc\n fg") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "abcd\nefgh\nx")
+}
+
+test "Visual block change repeats inserted text across rows and undoes as one change" {
+    testing::assert(visual_block_change() == nil)
+}
+
+fn visual_block_change() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nijkl") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "ljjcXY") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "aXYd\neXYh\niXYl") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "abcd\nefgh\nijkl")
+}
+
+test "Visual block insert skips short rows while append pads them" {
+    testing::assert(visual_block_insert() == nil)
+}
+
+fn visual_block_insert() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nx\nefgh") @try
+    press(&app, "ll") @try
+    editor::key(&app, 22) @try
+    press(&app, "jjI!") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "ab!cd\nx\nef!gh") @try
+    press(&app, "u") @try
+    editor::key(&app, 22) @try
+    press(&app, "jjA?") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "abc?d\nx  ?\nefg?h") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "abcd\nx\nefgh")
+}
+
+test "Visual block dollar follows each line end when deleting and appending" {
+    testing::assert(visual_block_eol() == nil)
+}
+
+fn visual_block_eol() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nef\nghijkl") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "$jjd") @try
+    assert_editor_text(&app, "a\ne\ng") @try
+    press(&app, "uggl") @try
+    editor::key(&app, 22) @try
+    press(&app, "$jjA!") @try
+    editor::key(&app, 27) @try
+    return assert_editor_text(&app, "abcd!\nef!\nghijkl!")
+}
+
+test "Visual block paste replaces each selected row without joining lines" {
+    testing::assert(visual_block_replace() == nil)
+}
+
+fn visual_block_replace() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "X\nabcd\nefgh") @try
+    press(&app, "vyjl") @try
+    editor::key(&app, 22) @try
+    press(&app, "ljp") @try
+    assert_editor_text(&app, "X\naXd\neXh") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "X\nabcd\nefgh")
+}
+
+test "Visual block corner swapping keeps the rectangle while allowing the other edge to move" {
+    testing::assert(visual_block_corners() == nil)
+}
+
+fn visual_block_corners() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nijkl") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "ljjOhd") @try
+    return assert_editor_text(&app, "d\nh\nl")
+}
+
+test "Block yank retains its width when pasting a row copied from a short line" {
+    testing::assert(visual_block_width() == nil)
+}
+
+fn visual_block_width() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nx\nefgh\n1234\n5678\n9012") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "ljjyjjjp") @try
+    return assert_editor_text(&app, "abcd\nx\nefgh\n12bc34\n56  78\n90fg12")
+}
+
+test "Block endpoints use whole tab characters and clamp at short lines like Vim" {
+    testing::assert(visual_block_endpoint("abcd\n\tZ", "\nZ") == nil)
+    testing::assert(visual_block_endpoint("abcd\nx", "ad\nx") == nil)
+}
+
+fn visual_block_endpoint(text string, expected string) error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, text) @try
+    press(&app, "ll") @try
+    editor::key(&app, 22) @try
+    press(&app, "jd") @try
+    return assert_editor_text(&app, expected)
+}
+
+test "Visual line paste preserves line boundaries for character and unterminated line registers" {
+    testing::assert(visual_line_put("one\ntwo\nthree", "vlyjVp", "one\non\nthree") == nil)
+    testing::assert(visual_line_put("one\ntwo", "jyyggVp", "two\ntwo") == nil)
+    testing::assert(visual_line_put("one\ntwo\nthree", "yyjvlp", "one\n\none\no\nthree") == nil)
+}
+
+fn visual_line_put(text string, keys string, expected string) error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, text) @try
+    press(&app, keys) @try
+    return assert_editor_text(&app, expected)
+}
+
+test "Normal Ctrl-w v still splits rather than starting Visual mode" {
+    testing::assert(visual_split_regression() == nil)
+}
+
+fn visual_split_regression() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "text") @try
+    app.active.width = 100
+    app.active.height = 25
+    editor::key(&app, 23) @try
+    press(&app, "v") @try
+    testing::assert(app.root.first != nil)
+    testing::assert(app.mode == editor::Mode::Normal)
+    return nil
+}
+
+test "Search extends Visual selection and restores it after the search prompt" {
+    testing::assert(visual_search() == nil)
+}
+
+fn visual_search() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one target three") @try
+    press(&app, "v/target") @try
+    editor::key(&app, 13) @try
+    press(&app, "d") @try
+    return assert_editor_text(&app, "arget three")
+}
+
+test "Block change skips rows shorter than its left edge without padding them" {
+    testing::assert(visual_block_short_change() == nil)
+}
+
+fn visual_block_short_change() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nx\nefgh") @try
+    press(&app, "ll") @try
+    editor::key(&app, 22) @try
+    press(&app, "jjcX") @try
+    editor::key(&app, 27) @try
+    return assert_editor_text(&app, "abXd\nx\nefXh")
+}
+
+test "Block insert includes rows ending exactly at the insertion column" {
+    testing::assert(visual_block_insert_edge() == nil)
+}
+
+fn visual_block_insert_edge() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nx\nefgh") @try
+    press(&app, "l") @try
+    editor::key(&app, 22) @try
+    press(&app, "jjI!") @try
+    editor::key(&app, 27) @try
+    return assert_editor_text(&app, "a!bcd\nx!\ne!fgh")
+}
+
+test "Block gg updates the horizontal endpoint as well as its row" {
+    testing::assert(visual_block_first_line() == nil)
+}
+
+fn visual_block_first_line() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nijkl") @try
+    press(&app, "lljj") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "ggd") @try
+    return assert_editor_text(&app, "d\nh\nl")
+}
+
+test "Visual paste with an empty register does not delete the selection" {
+    testing::assert(visual_empty_put() == nil)
+}
+
+fn visual_empty_put() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "text") @try
+    press(&app, "vlp") @try
+    return assert_editor_text(&app, "text")
+}
+
+test "Backspacing before a block insertion cancels replication" {
+    testing::assert(visual_block_backspace() == nil)
+}
+
+fn visual_block_backspace() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh") @try
+    press(&app, "l") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "jI") @try
+    editor::key(&app, editor::KeyBackspace) @try
+    press(&app, "XY") @try
+    editor::key(&app, editor::KeyEscape) @try
+    return assert_editor_text(&app, "XYbcd\nefgh")
+}
+
+test "Pasting a block over character selection keeps its rows aligned" {
+    testing::assert(visual_block_over_characters() == nil)
+}
+
+fn visual_block_over_characters() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "ab\ncd\n1234\n5678") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "jyjjvlp") @try
+    return assert_editor_text(&app, "ab\ncd\na34\nc5678")
+}
+
+test "Pasting linewise text over a rectangle puts complete lines below the block" {
+    testing::assert(visual_lines_over_block() == nil)
+}
+
+fn visual_lines_over_block() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\nabcd\nefgh") @try
+    press(&app, "yyjl") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "ljp") @try
+    return assert_editor_text(&app, "one\nad\neh\none")
+}
+
+test "Block yank and paste preserve combining marks attached to selected cells" {
+    testing::assert(visual_block_combining() == nil)
+}
+
+fn visual_block_combining() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "áx\nb́y\n12\n34") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "jyjjp") @try
+    return assert_editor_text(&app, "áx\nb́y\n1á2\n3b́4")
+}
+
+test "Ctrl-c cancels block insertion replication while preserving the typed first row" {
+    testing::assert(visual_block_interrupt() == nil)
+}
+
+fn visual_block_interrupt() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh") @try
+    press(&app, "l") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "jI!") @try
+    editor::key(&app, editor::KeyCtrlC) @try
+    return assert_editor_text(&app, "a!bcd\nefgh")
+}
+
+test "Moving horizontally after block dollar starts from the current line end" {
+    testing::assert(visual_block_leave_eol() == nil)
+}
+
+fn visual_block_leave_eol() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nef\nghijkl") @try
+    press(&app, "l") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "$jjhd") @try
+    return assert_editor_text(&app, "a\ne\ng")
+}
+
+test "Block endpoint swap preserves the new active column for vertical movement" {
+    testing::assert(visual_block_swap_motion() == nil)
+}
+
+fn visual_block_swap_motion() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abcd\nefgh\nijkl") @try
+    press(&app, "l") @try
+    editor::key(&app, editor::KeyCtrlV) @try
+    press(&app, "ljojd") @try
+    return assert_editor_text(&app, "abcd\neh\nijkl")
+}
+
+test "Yanking an empty final line still pastes a complete blank line" {
+    testing::assert(visual_empty_line_register() == nil)
+}
+
+fn visual_empty_line_register() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "abc\n") @try
+    press(&app, "jVyggp") @try
+    return assert_editor_text(&app, "abc\n\n")
+}
+
 test "o copies mixed indentation and places typed text after it" {
     testing::assert(open_indented_line() == nil)
 }
@@ -65,7 +570,7 @@ fn open_indented_line() error {
     defer editor::free_app(&app)
     setup_editor(&app, " \t  first\nnext") @try
     editor::key(&app, 111) @try
-    testing::assert_eq(app.mode, 1)
+    testing::assert(app.mode == editor::Mode::Insert)
     testing::assert_eq(app.active.cursor, 14)
     editor::key(&app, 88) @try
     assert_editor_text(&app, " \t  first\n \t  X\nnext") @try
@@ -183,7 +688,7 @@ fn word_motion() error {
     testing::assert_eq(app.active.cursor, 5)
     editor::key(&app, 119) @try
     testing::assert_eq(app.active.cursor, 15)
-    testing::assert_eq(app.mode, 0)
+    testing::assert(app.mode == editor::Mode::Normal)
     testing::assert_eq(editor::buffer(&app).revision, 0)
     return nil
 }
@@ -276,7 +781,7 @@ fn add_picker_item(p *editor::Picker, text string) error {
 fn picker_ranking() error {
     p := zero<editor::Picker>()
     defer editor::close_picker(&p)
-    p.kind = 3
+    p.kind = editor::PickerKind::Buffers
     i u64 := 0
     while i < 120 {
         add_picker_item(&p, "file") @try

@@ -22,43 +22,50 @@ fn compact_input(app *App) {
 }
 
 fn arrow(app *App, direction u8) error {
-    if app.picker.kind != 0 {
-        if direction == 65 {
-            return key(app, 11)
+    if app.picker.kind != PickerKind::None {
+        if direction == AnsiArrowUp {
+            return key(app, KeyCtrlK)
         }
-        if direction == 66 {
-            return key(app, 10)
+        if direction == AnsiArrowDown {
+            return key(app, KeyCtrlJ)
         }
         return nil
     }
-    if app.mode == 0 or app.mode == 1 {
-        if direction == 65 {
-            move(app, 107)
+    motion u8 := 0
+    if direction == AnsiArrowUp {
+        motion = KeyLowerK
+    } elif direction == AnsiArrowDown {
+        motion = KeyLowerJ
+    } elif direction == AnsiArrowRight {
+        motion = KeyLowerL
+    } elif direction == AnsiArrowLeft {
+        motion = KeyLowerH
+    } elif direction == AnsiHome {
+        motion = KeyZero
+    } elif direction == AnsiEnd {
+        motion = KeyDollar
+    }
+    if visual(app) {
+        return key(app, motion)
+    }
+    if app.mode == Mode::Normal or app.mode == Mode::Insert {
+        if motion != 0 and app.block_insert {
+            cancel_block_insert(app)
         }
-        if direction == 66 {
-            move(app, 106)
-        }
-        if direction == 67 {
-            move(app, 108)
-        }
-        if direction == 68 {
-            move(app, 104)
-        }
-        if direction == 72 {
-            move(app, 48)
-        }
-        if direction == 70 {
-            move(app, 36)
-        }
+        move(app, motion)
     }
     return nil
 }
 
 fn finish_paste(app *App) error {
-    if app.mode == 1 and app.picker.kind == 0 {
-        app.group = app.group + 1
+    if app.mode == Mode::Insert and app.picker.kind == PickerKind::None {
+        if app.block_insert == false {
+            app.group = app.group + 1
+        }
         edit(app, app.active.cursor, app.active.cursor, lists::view<u8>(&app.paste_data)) @try
-        app.group = app.group + 1
+        if app.block_insert == false {
+            app.group = app.group + 1
+        }
     } else {
         app.message = "Paste ignored outside Insert mode"
     }
@@ -73,8 +80,8 @@ fn decode(app *App, expired bool) error {
         bytes := all[app.input_at:len(all)] @try
         first := bytes[0]
         if app.paste {
-            if first == 27 {
-                marker u8[6] := .{27,91,50,48,49,126}
+            if first == ByteEscape {
+                marker u8[6] := .{ByteEscape,ByteLeftBracket,ByteTwo,ByteZero,ByteOne,ByteTilde}
                 i u64 := 0
                 same := true
                 while i < min(len(bytes), 6) {
@@ -97,27 +104,27 @@ fn decode(app *App, expired bool) error {
                 lists::append<u8>(&app.paste_data, first) @try
                 consume(app, 1)
             }
-        } elif first == 27 {
+        } elif first == ByteEscape {
             if len(bytes) == 1 {
                 if expired {
-                    key(app, 27) @try
+                    key(app, KeyEscape) @try
                     consume(app, 1)
                 } else {
                     break
                 }
-            } elif bytes[1] == 91 or bytes[1] == 79 {
+            } elif bytes[1] == ByteLeftBracket or bytes[1] == ByteUpperO {
                 end u64 := 2
-                while end < len(bytes) and (bytes[end] < 64 or bytes[end] > 126) {
+                while end < len(bytes) and (bytes[end] < AnsiFinalFirst or bytes[end] > AnsiFinalLast) {
                     end = end + 1
                 }
                 if end == len(bytes) {
-                    if len(bytes) > 64 or expired {
+                    if len(bytes) > MaxEscapeBytes or expired {
                         consume(app, len(bytes))
                     } else {
                         break
                     }
                 } else {
-                    if end == 5 and bytes[2] == 50 and bytes[3] == 48 and bytes[4] == 48 and bytes[5] == 126 {
+                    if end == 5 and bytes[2] == ByteTwo and bytes[3] == ByteZero and bytes[4] == ByteZero and bytes[5] == ByteTilde {
                         app.paste = true
                         lists::clear<u8>(&app.paste_data)
                     } else {
@@ -126,7 +133,7 @@ fn decode(app *App, expired bool) error {
                     consume(app, end + 1)
                 }
             } else {
-                key(app, 27) @try
+                key(app, KeyEscape) @try
                 consume(app, 1)
             }
         } else {

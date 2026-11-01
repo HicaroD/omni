@@ -47,3 +47,10 @@ fn min(a u64, b u64) u64 {
     }
     return b
 }
+
+fn max(a u64, b u64) u64 {
+    if a > b {
+        return a
+    }
+    return b
+}

@@ -51,6 +51,46 @@ empty lines, and stays on a UTF-8 character boundary at the end of the buffer.
 Search wraps and uses ASCII smart case: queries with uppercase ASCII letters
 match case-sensitively. No regex support for in-buffer search yet.
 
+### Visual selection
+
+Start a selection in Normal mode, move its endpoint, then apply an operator.
+The status shows `VISUAL`, `VISUAL LINE`, or `VISUAL BLOCK`.
+
+| Keys | Action |
+| --- | --- |
+| `v`, `V`, `Ctrl-v` | Characterwise, whole-line, or rectangular selection |
+| Movement keys, arrows, `0`, `$`, `gg`, `G`, `/`, `n`, `N` | Extend the selection |
+| `o` | Swap the active endpoint and anchor |
+| Block `O` | Switch horizontal corners on the same row |
+| `d`, `x` | Delete selection into the local yank register |
+| `y` | Yank selection without changing text |
+| `c` | Delete selection and enter Insert mode |
+| `p`, `P` | Replace selection; `P` preserves the existing yank register |
+| Block `I`, `A` | Insert before / append after the rectangle |
+| `Esc`, `Ctrl-c`, or the current selection key | Cancel selection |
+
+Press another selection key to change its type without resetting the anchor.
+Character selections include both endpoints. For example, `Vjjd` deletes three
+lines and `Vjjy` copies three lines. After an operator, selection ends; `p` in
+Normal mode pastes using the register's character, line, or block shape.
+Use `:copy` after yanking to copy the register to the macOS clipboard.
+
+Rectangles use display columns, including four-column tabs and wide characters.
+A tab at an endpoint is included in full; partially selected interior tabs are
+split into spaces when necessary. Short rows do not have text deleted beyond
+their ends. Block paste pads short destination rows and can create new lines.
+Block `$` follows every selected row's end; `$A` appends at each row's own end.
+
+For block `c`, `I`, and `A`, type on the first row and press **Esc** to repeat the
+inserted text on the other rows. `I` and `c` skip rows shorter than the left edge;
+`A` pads them. Arrows, Ctrl-c, or backspacing before the insertion point cancel
+repetition, leaving the first-row edits intact. Multi-line block insertion is
+not supported. A completed Visual edit, including block repetition, undoes as
+one operation. Press Esc before switching buffers/windows or entering commands.
+
+This is a Vim-style subset: `gv`, text objects, named registers, counts, Visual
+indentation/case operators, and Visual Ex ranges are not implemented.
+
 ### Commands
 
 Enter `:` in Normal mode; press Enter to execute or Esc to cancel. The remainder
@@ -134,7 +174,9 @@ directories remain excluded even with hidden/ignored files enabled. Search reads
 main.t                    entry point; fatal errors only after session cleanup
 rope/rope.t               mutable chunked rope (randomized implicit treap)
 editor/model.t            buffers, edit history, views, split ownership
+editor/constants.t        typed modes/registers/pickers and named key/text bytes
 editor/commands.t         modal commands, navigation, search, clipboard
+editor/visual.t           selection ranges, rectangular edits and block insertion
 editor/input.t            streaming key/escape/paste decoder
 editor/render.t           terminal-cell layout and batched rendering
 editor/screen.t           row cache, changed-row writes, cursor/sync state
@@ -154,7 +196,7 @@ Run `reset` if the terminal is left in a bad state.
 
 ## Limits
 
-- No highlighting, LSP, plugins, mouse, Visual modes, composed motions, counts,
+- No syntax highlighting, LSP, plugins, mouse, composed motions, counts,
   macros, language-aware indentation, soft wrapping, or persistent configuration.
 - Pickers retain up to 50,000 candidates and show the top 100. Previews read at
   most the first MiB. Individual search records larger than a MiB stop the scan.

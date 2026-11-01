@@ -21,7 +21,7 @@ struct Match {
 
 struct Picker {
     changed bool
-    kind i32
+    kind PickerKind
     process process::Child
     running bool
     items lists::List<Item>
@@ -61,7 +61,7 @@ fn close_picker(p *Picker) {
     lists::free<u8>(&p.query)
     lists::free<u8>(&p.pending)
     rope::free(&p.preview)
-    p.kind = 0
+    p.kind = PickerKind::None
     p.preview_ready = false
 }
 
@@ -78,9 +78,9 @@ fn restart_picker(p *Picker) error {
         return err
     }
     defer strings::free(&query)
-    kind i32 := 0
-    if p.kind == 2 {
-        kind = 1
+    kind := SearchKind::Files
+    if p.kind == PickerKind::ProjectSearch {
+        kind = SearchKind::Text
         if lists::count<u8>(&p.query) == 0 {
             return nil
         }
@@ -94,7 +94,7 @@ fn restart_picker(p *Picker) error {
     return nil
 }
 
-fn start_picker(app *App, kind i32) error {
+fn start_picker(app *App, kind PickerKind) error {
     close_picker(&app.picker)
     p := &app.picker
     p.kind = kind
@@ -102,7 +102,7 @@ fn start_picker(app *App, kind i32) error {
     p.hidden = false
     p.ignored = false
     p.regex = false
-    if kind == 3 {
+    if kind == PickerKind::Buffers {
         buffers := lists::view<*Buffer>(&app.buffers)
         i u64 := 0
         while i < len(buffers) {
@@ -127,8 +127,8 @@ fn start_picker(app *App, kind i32) error {
 }
 
 fn fold(b u8) u8 {
-    if b >= 65 and b <= 90 {
-        return b + 32
+    if b >= AsciiUpperFirst and b <= AsciiUpperLast {
+        return b + AsciiCaseOffset
     }
     return b
 }
@@ -152,7 +152,7 @@ fn fuzzy(label string, query u8[]) (u64, bool) {
             if i == 0 {
                 score = score + 20
             } else {
-                if bytes[i - 1] == 47 or bytes[i - 1] == 95 or bytes[i - 1] == 45 {
+                if bytes[i - 1] == ByteSlash or bytes[i - 1] == ByteUnderscore or bytes[i - 1] == ByteDash {
                     score = score + 20
                 }
             }
@@ -175,7 +175,7 @@ fn filter_picker(p *Picker) error {
         i = i + 1
         score u64 := 0
         found := true
-        if p.kind != 2 {
+        if p.kind != PickerKind::ProjectSearch {
             rank, ok := fuzzy(strings::view(&items[index].label), lists::view<u8>(&p.query))
             score = rank
             found = ok
@@ -233,20 +233,20 @@ fn add_record(p *Picker, bytes u8[]) error {
     path_end := len(bytes)
     line u64 := 0
     column u64 := 0
-    if p.kind == 2 {
+    if p.kind == PickerKind::ProjectSearch {
         path_end = 0
-        while path_end < len(bytes) and bytes[path_end] != 0 {
+        while path_end < len(bytes) and bytes[path_end] != ByteNul {
             path_end = path_end + 1
         }
         a := path_end + 1
         colon := a
-        while colon < len(bytes) and bytes[colon] != 58 {
+        while colon < len(bytes) and bytes[colon] != ByteColon {
             colon = colon + 1
         }
         line = parse_decimal(bytes, a, colon)
         b := colon + 1
         colon2 := b
-        while colon2 < len(bytes) and bytes[colon2] != 58 {
+        while colon2 < len(bytes) and bytes[colon2] != ByteColon {
             colon2 = colon2 + 1
         }
         column = parse_decimal(bytes, b, colon2)
@@ -266,8 +266,8 @@ fn add_record(p *Picker, bytes u8[]) error {
         strings::free(&path)
         return err
     }
-    if p.kind == 2 {
-        lists::append<u8>(&label_bytes, 58) @catch err {
+    if p.kind == PickerKind::ProjectSearch {
+        lists::append<u8>(&label_bytes, ByteColon) @catch err {
             strings::free(&path)
             return err
         }
@@ -312,12 +312,12 @@ fn poll_picker(p *Picker) error {
     i u64 := 0
     path_seen := false
     while i < len(bytes) {
-        delimiter := bytes[i] == 0
-        if p.kind == 2 {
-            if bytes[i] == 0 {
+        delimiter := bytes[i] == ByteNul
+        if p.kind == PickerKind::ProjectSearch {
+            if bytes[i] == ByteNul {
                 path_seen = true
             }
-            delimiter = bytes[i] == 10 and path_seen
+            delimiter = bytes[i] == ByteLF and path_seen
         }
         if delimiter {
             record := bytes[start:i] @catch err {
@@ -359,7 +359,7 @@ fn poll_picker(p *Picker) error {
 
 fn picker_changed(p *Picker) error {
     p.selected = 0
-    if p.kind == 2 {
+    if p.kind == PickerKind::ProjectSearch {
         return restart_picker(p)
     }
     return filter_picker(p)
@@ -374,7 +374,7 @@ fn accept_picker(app *App) error {
     items := lists::view<Item>(&p.items)
     selected := &matches[p.selected]
     item := &items[selected.index]
-    if p.kind == 3 {
+    if p.kind == PickerKind::Buffers {
         switch_buffer(app, item.buffer) @catch err {
             return err
         }

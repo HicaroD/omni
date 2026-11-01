@@ -58,12 +58,24 @@ struct App {
     root *Pane
     active *Pane
     clipboard lists::List<u8>
-    linewise bool
-    mode i32
+    register_kind RegisterKind
+    block_width u64
+    mode Mode
+    visual_anchor u64
+    visual_column u64
+    visual_wanted u64
+    visual_anchor_column u64
+    visual_eol bool
+    block_insert bool
+    block_insert_start u64
+    block_insert_column u64
+    block_insert_eol bool
+    block_insert_rows lists::List<u64>
     pending u8
     group u64
     prompt lists::List<u8>
     search lists::List<u8>
+    search_mode Mode
     message string
     quit bool
     opened bool
@@ -140,6 +152,7 @@ fn free_app(app *App) {
     lists::free<*Buffer>(&app.buffers)
     free_pane(app.root)
     lists::free<u8>(&app.clipboard)
+    lists::free<u64>(&app.block_insert_rows)
     lists::free<u8>(&app.prompt)
     lists::free<u8>(&app.search)
     lists::free<u8>(&app.input)
@@ -383,7 +396,7 @@ fn previous_point(r *rope::Rope, at u64) u64 {
         return 0
     }
     pos := at - 1
-    while pos > 0 and rope::byte(r, pos) >= 128 and rope::byte(r, pos) < 192 {
+    while pos > 0 and rope::byte(r, pos) >= Utf8ContinuationFirst and rope::byte(r, pos) < Utf8ContinuationLimit {
         pos = pos - 1
     }
     return pos
@@ -391,7 +404,7 @@ fn previous_point(r *rope::Rope, at u64) u64 {
 
 fn next_point(r *rope::Rope, at u64) u64 {
     pos := min(at + 1, rope::size(r.root))
-    while pos < rope::size(r.root) and rope::byte(r, pos) >= 128 and rope::byte(r, pos) < 192 {
+    while pos < rope::size(r.root) and rope::byte(r, pos) >= Utf8ContinuationFirst and rope::byte(r, pos) < Utf8ContinuationLimit {
         pos = pos + 1
     }
     return pos
@@ -409,12 +422,12 @@ fn insert_newline(app *App, at u64) error {
     b := buffer(app)
     start := rope::line_start(&b.text, rope::line_at(&b.text, at))
     end := start
-    while end < at and (rope::byte(&b.text, end) == 32 or rope::byte(&b.text, end) == 9) {
+    while end < at and (rope::byte(&b.text, end) == ByteSpace or rope::byte(&b.text, end) == ByteTab) {
         end = end + 1
     }
     data := lists::create<u8>()
     defer lists::free<u8>(&data)
-    lists::append<u8>(&data, 10) @try
+    lists::append<u8>(&data, ByteLF) @try
     indent := rope::copy(&b.text, start, end) @try
     defer lists::free<u8>(&indent)
     lists::append_slice<u8>(&data, lists::view<u8>(&indent)) @try
@@ -422,10 +435,10 @@ fn insert_newline(app *App, at u64) error {
 }
 
 fn word_class(byte u8) u8 {
-    if byte == 32 or (byte >= 9 and byte <= 13) {
+    if byte == ByteSpace or (byte >= ByteTab and byte <= ByteCR) {
         return 0
     }
-    if (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 95 or byte >= 128 {
+    if (byte >= AsciiDigitFirst and byte <= AsciiDigitLast) or (byte >= AsciiUpperFirst and byte <= AsciiUpperLast) or (byte >= AsciiLowerFirst and byte <= AsciiLowerLast) or byte == ByteUnderscore or byte >= Utf8ContinuationFirst {
         return 1
     }
     return 2
@@ -436,7 +449,7 @@ fn move(app *App, key u8) {
     p := app.active
     line := rope::line_at(&b.text, p.cursor)
     start := rope::line_start(&b.text, line)
-    if key == 119 {
+    if key == KeyLowerW {
         size := rope::size(b.text.root)
         if p.cursor >= size {
             return
@@ -449,7 +462,7 @@ fn move(app *App, key u8) {
             p.cursor = next_point(&b.text, p.cursor)
         }
         while p.cursor < size and word_class(rope::byte(&b.text, p.cursor)) == 0 {
-            if rope::byte(&b.text, p.cursor) == 10 and (p.cursor == 0 or rope::byte(&b.text, p.cursor - 1) == 10) {
+            if rope::byte(&b.text, p.cursor) == ByteLF and (p.cursor == 0 or rope::byte(&b.text, p.cursor - 1) == ByteLF) {
                 break
             }
             p.cursor = next_point(&b.text, p.cursor)
@@ -458,27 +471,27 @@ fn move(app *App, key u8) {
             p.cursor = previous_point(&b.text, size)
         }
     }
-    if key == 104 and p.cursor > start {
+    if key == KeyLowerH and p.cursor > start {
         p.cursor = previous_point(&b.text, p.cursor)
     }
-    if key == 108 and p.cursor < line_end(&b.text, p.cursor) {
+    if key == KeyLowerL and p.cursor < line_end(&b.text, p.cursor) {
         p.cursor = next_point(&b.text, p.cursor)
     }
-    if key == 48 {
+    if key == KeyZero {
         p.cursor = start
     }
-    if key == 36 {
+    if key == KeyDollar {
         p.cursor = line_end(&b.text, p.cursor)
     }
-    if key == 71 {
+    if key == KeyUpperG {
         p.cursor = rope::line_start(&b.text, rope::breaks(b.text.root))
     }
-    if key == 106 or key == 107 {
+    if key == KeyLowerJ or key == KeyLowerK {
         target := line
-        if key == 106 and line < rope::breaks(b.text.root) {
+        if key == KeyLowerJ and line < rope::breaks(b.text.root) {
             target = line + 1
         }
-        if key == 107 and line > 0 {
+        if key == KeyLowerK and line > 0 {
             target = line - 1
         }
         column u64 := 0

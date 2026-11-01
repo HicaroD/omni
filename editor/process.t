@@ -6,10 +6,10 @@ use "std::strings"
 use "std::memory"
 use "std::terminal"
 
-fn spawn_search(kind i32, query string, hidden bool, ignored bool, regex bool) (process::Child, error) {
+fn spawn_search(kind SearchKind, query string, hidden bool, ignored bool, regex bool) (process::Child, error) {
     args := lists::create<string>()
     defer lists::free<string>(&args)
-    if kind == 0 {
+    if kind == SearchKind::Files {
         lists::append<string>(&args, "--files") @try
         lists::append<string>(&args, "-0") @try
     } else {
@@ -25,7 +25,7 @@ fn spawn_search(kind i32, query string, hidden bool, ignored bool, regex bool) (
     if ignored {
         lists::append<string>(&args, "--no-ignore") @try
     }
-    if kind == 0 or hidden {
+    if kind == SearchKind::Files or hidden {
         lists::append<string>(&args, "-g") @try
         lists::append<string>(&args, "!.git") @try
     }

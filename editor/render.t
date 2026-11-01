@@ -15,10 +15,10 @@ fn point_width(point u32) i32 {
 }
 
 fn csi(out *lists::List<u8>, suffix string) error {
-    lists::append<u8>(out, 27) @catch err {
+    lists::append<u8>(out, ByteEscape) @catch err {
         return err
     }
-    lists::append<u8>(out, 91) @catch err {
+    lists::append<u8>(out, ByteLeftBracket) @catch err {
         return err
     }
     return append_text(out, suffix)
@@ -78,8 +78,8 @@ fn point(r *rope::Rope, at u64) (u32, u64) {
 }
 
 fn cell_width(cp u32, column u64) u64 {
-    if cp == 9 {
-        return 4 - (column - (column / 4) * 4)
+    if cp == CodePointTab {
+        return TabWidth - (column - (column / TabWidth) * TabWidth)
     }
     w := point_width(cp)
     if w == 0 {
@@ -105,7 +105,7 @@ fn display_column(r *rope::Rope, start u64, end u64) u64 {
 fn spaces(out *lists::List<u8>, count u64) error {
     i u64 := 0
     while i < count {
-        lists::append<u8>(out, 32) @catch err {
+        lists::append<u8>(out, ByteSpace) @catch err {
             return err
         }
         i = i + 1
@@ -114,31 +114,66 @@ fn spaces(out *lists::List<u8>, count u64) error {
 }
 
 fn draw_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64) error {
+    return draw_selected_line(out, r, start, left, width, nil)
+}
+
+fn selection_style(out *lists::List<u8>, reverse *bool, selected bool) error {
+    if selected != *reverse {
+        if selected {
+            csi(out, "7m") @try
+        } else {
+            csi(out, "0m") @try
+        }
+        *reverse = selected
+    }
+    return nil
+}
+
+fn draw_selected_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64, selection *Selection) error {
     at := start
+    line := rope::line_at(r, start)
     column u64 := 0
     drawn u64 := 0
-    while at < rope::size(r.root) and rope::byte(r, at) != 10 and column < left + width {
+    reverse := false
+    while at < rope::size(r.root) and rope::byte(r, at) != ByteLF and column < left + width {
         cp, count := point(r, at)
         cells := cell_width(cp, column)
+        if cp == CodePointTab {
+            cell := column
+            while cell < column + cells {
+                if cell >= left and cell < left + width {
+                    selected := false
+                    if selection != nil {
+                        selected = visual_selected(selection, line, at, cell, 1, false)
+                    }
+                    selection_style(out, &reverse, selected) @try
+                    spaces(out, 1) @try
+                    drawn = drawn + 1
+                }
+                cell = cell + 1
+            }
+            column = column + cells
+            at = at + count
+            continue
+        }
+        selected := false
+        if selection != nil {
+            selected = visual_selected(selection, line, at, column, cells, false)
+        }
+        selection_style(out, &reverse, selected) @try
         if column >= left and column + cells <= left + width {
-            if cp == 9 {
-                spaces(out, cells) @catch err {
+            if cp < CodePointSpace or cp == CodePointDelete or point_width(cp) < 0 or (cp == CodePointQuestion and rope::byte(r, at) != ByteQuestion) {
+                lists::append<u8>(out, ByteQuestion) @catch err {
                     return err
                 }
             } else {
-                if cp < 32 or cp == 127 or point_width(cp) < 0 or (cp == 63 and rope::byte(r, at) != 63) {
-                    lists::append<u8>(out, 63) @catch err {
-                        return err
-                    }
-                } else {
-                    if cells > 0 or drawn > 0 {
-                        i u64 := 0
-                        while i < count {
-                            lists::append<u8>(out, rope::byte(r, at + i)) @catch err {
-                                return err
-                            }
-                            i = i + 1
+                if cells > 0 or drawn > 0 {
+                    i u64 := 0
+                    while i < count {
+                        lists::append<u8>(out, rope::byte(r, at + i)) @catch err {
+                            return err
                         }
+                        i = i + 1
                     }
                 }
             }
@@ -155,10 +190,18 @@ fn draw_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64
         column = column + cells
         at = at + count
     }
-    if drawn < width {
-        return spaces(out, width - drawn)
+    while drawn < width {
+        selected := false
+        if selection != nil {
+            if selection.mode == Mode::VisualLine or left + drawn == column {
+                selected = visual_selected(selection, line, at, left + drawn, 1, true)
+            }
+        }
+        selection_style(out, &reverse, selected) @try
+        spaces(out, 1) @try
+        drawn = drawn + 1
     }
-    return nil
+    return selection_style(out, &reverse, false)
 }
 
 fn label(out *lists::List<u8>, text string, width u64) error {
@@ -175,7 +218,7 @@ fn label(out *lists::List<u8>, text string, width u64) error {
 }
 
 fn overlay_row(app *App, y u64) bool {
-    return app.picker.kind != 0 and app.screen_width >= 30 and app.screen_height >= 10 and y >= 1 and y < app.screen_height - 2
+    return app.picker.kind != PickerKind::None and app.screen_width >= 30 and app.screen_height >= 10 and y >= 1 and y < app.screen_height - 2
 }
 
 fn pane_line(app *App, r *rope::Rope, start u64, left u64, width u64) error {
@@ -242,15 +285,15 @@ fn layout(p *Pane, x u64, y u64, width u64, height u64) {
     }
 }
 
-fn draw_pane(app *App, p *Pane) error {
+fn draw_pane(app *App, p *Pane, selection *Selection) error {
     if p.width == 0 or p.height == 0 {
         return nil
     }
     if p.first != nil {
-        draw_pane(app, p.first) @catch err {
+        draw_pane(app, p.first, selection) @catch err {
             return err
         }
-        draw_pane(app, p.second) @catch err {
+        draw_pane(app, p.second, selection) @catch err {
             return err
         }
         if p.vertical {
@@ -295,8 +338,10 @@ fn draw_pane(app *App, p *Pane) error {
         }
         if p.top + row <= rope::breaks(b.text.root) {
             start := rope::line_start(&b.text, p.top + row)
-            pane_line(app, &b.text, start, p.left, p.width) @catch err {
-                return err
+            if p == app.active and visual(app) and app.picker.kind == PickerKind::None {
+                draw_selected_line(&app.frame, &b.text, start, p.left, p.width, selection) @try
+            } else {
+                pane_line(app, &b.text, start, p.left, p.width) @try
             }
         } else {
             pane_label(app, "~", p.width) @catch err {
@@ -380,7 +425,7 @@ fn preview(app *App) error {
     p.preview_key = key
     items := lists::view<Item>(&p.items)
     item := &items[key]
-    if p.kind == 3 {
+    if p.kind == PickerKind::Buffers {
         return nil
     }
     name := strings::view(&item.path)
@@ -415,10 +460,10 @@ fn draw_picker(app *App, width u64, height u64) error {
         return err
     }
     title := " FILES  Ctrl-h hidden | Tab ignored | Ctrl-j/k select | Enter open"
-    if p.kind == 2 {
+    if p.kind == PickerKind::ProjectSearch {
         title = " SEARCH  Ctrl-r regex | Ctrl-h hidden | Ctrl-j/k select | Enter open"
     }
-    if p.kind == 3 {
+    if p.kind == PickerKind::Buffers {
         title = " BUFFERS  Ctrl-j/k select | Enter open | Esc close"
     }
     label(&app.frame, title, w) @catch err {
@@ -489,7 +534,7 @@ fn draw_picker(app *App, width u64, height u64) error {
             if item.line > 3 {
                 preview_top = item.line - 3
             }
-            if p.kind == 3 {
+            if p.kind == PickerKind::Buffers {
                 buffers := lists::view<*Buffer>(&app.buffers)
                 selected_buffer := buffers[item.buffer]
                 r = &selected_buffer.text
@@ -539,15 +584,16 @@ fn draw(app *App, output *terminal::Handle) error {
         return err
     }
     layout(app.root, 0, 0, width, height - 1)
-    draw_pane(app, app.root) @catch err {
+    selection := render_selection(app)
+    draw_pane(app, app.root, &selection) @catch err {
         return err
     }
     position(app, 0, height - 1) @catch err {
         return err
     }
-    if app.mode == 2 or app.mode == 3 {
+    if app.mode == Mode::Command or app.mode == Mode::Search {
         prefix := ":"
-        if app.mode == 3 {
+        if app.mode == Mode::Search {
             prefix = "/"
         }
         append_text(&app.frame, prefix) @catch err {
@@ -564,21 +610,30 @@ fn draw(app *App, output *terminal::Handle) error {
         text := app.message
         if text == "" {
             text = "NORMAL  :files  :grep  :buffers  :help"
-            if app.mode == 1 {
+            if app.mode == Mode::Insert {
                 text = "INSERT"
+            }
+            if app.mode == Mode::VisualCharacter {
+                text = "VISUAL"
+            }
+            if app.mode == Mode::VisualLine {
+                text = "VISUAL LINE"
+            }
+            if app.mode == Mode::VisualBlock {
+                text = "VISUAL BLOCK"
             }
         }
         label(&app.frame, text, width) @catch err {
             return err
         }
     }
-    if app.picker.kind != 0 and width >= 30 and height >= 10 {
+    if app.picker.kind != PickerKind::None and width >= 30 and height >= 10 {
         draw_picker(app, width, height) @catch err {
             return err
         }
     } else {
         p := app.active
-        if app.mode == 2 or app.mode == 3 {
+        if app.mode == Mode::Command or app.mode == Mode::Search {
             app.cursor_x = min(1 + lists::count<u8>(&app.prompt), width - 1)
             app.cursor_y = height - 1
             app.cursor_visible = true
