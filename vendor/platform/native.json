@@ -1,7 +1,0 @@
-{
-  "version": "0.1.0",
-  "targets": {
-    "darwin-arm64": {"include_dirs": ["."], "sources": ["platform.c"]},
-    "darwin-amd64": {"include_dirs": ["."], "sources": ["platform.c"]}
-  }
-}

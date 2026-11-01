@@ -3,9 +3,16 @@ package editor
 use "std::lists"
 use "std::strings"
 use "std::terminal"
-use "std::memory"
 use "pkg::rope"
-use "vendor::platform"
+use "std::fs"
+use "std::unicode"
+
+fn point_width(point u32) i32 {
+    width := unicode::width(point) @catch err {
+        return -1
+    }
+    return width
+}
 
 fn csi(out *lists::List<u8>, suffix string) error {
     lists::append<u8>(out, 27) @catch err {
@@ -74,7 +81,7 @@ fn cell_width(cp u32, column u64) u64 {
     if cp == 9 {
         return 4 - (column - (column / 4) * 4)
     }
-    w := platform::width(cp)
+    w := point_width(cp)
     if w == 0 {
         return 0
     }
@@ -119,7 +126,7 @@ fn draw_line(out *lists::List<u8>, r *rope::Rope, start u64, left u64, width u64
                     return err
                 }
             } else {
-                if cp < 32 or cp == 127 or platform::width(cp) < 0 or (cp == 63 and rope::byte(r, at) != 63) {
+                if cp < 32 or cp == 127 or point_width(cp) < 0 or (cp == 63 and rope::byte(r, at) != 63) {
                     lists::append<u8>(out, 63) @catch err {
                         return err
                     }
@@ -376,18 +383,20 @@ fn preview(app *App) error {
     if p.kind == 3 {
         return nil
     }
-    c := strings::to_c(strings::view(&item.path)) @catch err {
-        return err
-    }
-    defer strings::free_c(&c)
-    data rawptr := nil
-    count u64 := 0
-    result := platform::preview(strings::c_view(&c), &data, &count)
-    defer memory::free(data)
-    if result != 0 {
+    name := strings::view(&item.path)
+    info := fs::stat(name) @catch err {
         return nil
     }
-    return rope::replace(&p.preview, 0, 0, slice_from_raw<u8>(data, min(count, 1048576)))
+    if info.kind != fs::FileType::Regular {
+        return nil
+    }
+    data := fs::read_preview(name, 1048576) @catch err {
+        return nil
+    }
+    defer strings::free(&data)
+    bytes := strings::to_bytes(strings::view(&data)) @try
+    defer lists::free<u8>(&bytes)
+    return rope::replace(&p.preview, 0, 0, lists::view<u8>(&bytes))
 }
 
 fn draw_picker(app *App, width u64, height u64) error {
@@ -504,7 +513,7 @@ fn draw_picker(app *App, width u64, height u64) error {
     if p.ignored {
         footer = "Ignored files included (Tab toggles)"
     }
-    if p.process != nil {
+    if p.running {
         footer = "Searching..."
     }
     if p.limited {

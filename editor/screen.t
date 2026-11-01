@@ -3,7 +3,7 @@ package editor
 use "std::lists"
 use "std::terminal"
 use "std::strings"
-use "std::libc"
+use "std::process"
 
 struct RenderRow {
     current lists::List<u8>
@@ -17,23 +17,31 @@ fn free_row(row *RenderRow) {
 }
 
 fn sync_supported() bool {
-    setting := libc::getenv("OMNI_SYNC_UPDATES")
-    if setting != nil {
-        return strings::from_c(setting) == "1"
-    }
-    if libc::getenv("TMUX") != nil {
+    setting, configured, setting_err := process::lookup_env("OMNI_SYNC_UPDATES")
+    defer strings::free(&setting)
+    if setting_err != nil {
         return false
     }
-    term := libc::getenv("TERM")
-    if term != nil {
-        name := strings::from_c(term)
+    if configured {
+        return strings::view(&setting) == "1"
+    }
+    tmux, in_tmux, tmux_err := process::lookup_env("TMUX")
+    defer strings::free(&tmux)
+    if in_tmux or tmux_err != nil {
+        return false
+    }
+    term, has_term, term_err := process::lookup_env("TERM")
+    defer strings::free(&term)
+    if has_term and term_err == nil {
+        name := strings::view(&term)
         if name == "xterm-kitty" or name == "xterm-ghostty" {
             return true
         }
     }
-    program := libc::getenv("TERM_PROGRAM")
-    if program != nil {
-        name2 := strings::from_c(program)
+    program, has_program, program_err := process::lookup_env("TERM_PROGRAM")
+    defer strings::free(&program)
+    if has_program and program_err == nil {
+        name2 := strings::view(&program)
         return name2 == "WezTerm" or name2 == "ghostty"
     }
     return false

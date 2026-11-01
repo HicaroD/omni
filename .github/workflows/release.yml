@@ -21,13 +21,13 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           printf '%s\n' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
-      - name: Install Telia v0.3.0
+      - name: Install Telia v0.3.2
         run: |
           mkdir -p "$RUNNER_TEMP/telia"
           cd "$RUNNER_TEMP/telia"
-          base=https://github.com/HicaroD/Telia/releases/download/v0.3.0
+          base=https://github.com/HicaroD/Telia/releases/download/v0.3.2
           curl -fSL --retry 3 "$base/telia-darwin-arm64.tar.gz" -o telia-darwin-arm64.tar.gz
-          echo 'c0003b6308f7676a8d512ef61030c02feb381f59ccfbb634f795673f05e16efb  telia-darwin-arm64.tar.gz' | shasum -a 256 -c -
+          echo 'f26fc6fcb429b5ee4d53e131b80831a5d55d6123d54ca6854b5c5fa57120af92  telia-darwin-arm64.tar.gz' | shasum -a 256 -c -
           tar -xzf telia-darwin-arm64.tar.gz
           compiler=$(find "$PWD" -type f -name telia -perm -111)
           test -n "$compiler"

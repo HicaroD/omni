@@ -7,6 +7,35 @@ use "std::memory"
 use "std::strings"
 use "std::testing"
 
+test "editor byte conversions preserve embedded zeros and invalid UTF-8" {
+    testing::assert(binary_text_roundtrip() == nil)
+}
+
+fn binary_text_roundtrip() error {
+    original u8[5] := .{65, 0, 255, 192, 66}
+    text := editor::owned_bytes(original[:]) @try
+    defer strings::free(&text)
+    testing::assert_eq(strings::len(strings::view(&text)), 5)
+    bytes := editor::text_bytes(strings::view(&text)) @try
+    defer lists::free<u8>(&bytes)
+    view := lists::view<u8>(&bytes)
+    testing::assert_eq(len(view), 5)
+    i u64 := 0
+    while i < 5 {
+        testing::assert_eq(view[i], original[i])
+        i = i + 1
+    }
+    return nil
+}
+
+test "display width is locale independent and rejects invalid scalars" {
+    testing::assert_eq(editor::point_width(65), 1)
+    testing::assert_eq(editor::point_width(30028), 2)
+    testing::assert_eq(editor::point_width(769), 0)
+    testing::assert_eq(editor::point_width(27), -1)
+    testing::assert_eq(editor::point_width(1114112), -1)
+}
+
 fn setup_editor(app *editor::App, text string) error {
     app.root = editor::new_pane() @try
     app.active = app.root

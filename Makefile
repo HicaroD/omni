@@ -1,5 +1,4 @@
 TELIA ?= telia
-export T_VENDOR_PATH := $(CURDIR)/vendor
 
 .PHONY: build run unit test test-release test-install sanitize clean
 build:

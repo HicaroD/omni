@@ -4,7 +4,7 @@ use "std::lists"
 use "std::strings"
 use "std::memory"
 use "pkg::rope"
-use "vendor::platform"
+use "std::process"
 
 struct Item {
     path strings::Owned
@@ -22,7 +22,8 @@ struct Match {
 struct Picker {
     changed bool
     kind i32
-    process rawptr
+    process process::Child
+    running bool
     items lists::List<Item>
     matches lists::List<Match>
     query lists::List<u8>
@@ -52,8 +53,8 @@ fn free_items(p *Picker) {
 }
 
 fn close_picker(p *Picker) {
-    platform::cancel(p.process)
-    p.process = nil
+    process::close_child(&p.process)
+    p.running = false
     free_items(p)
     lists::free<Item>(&p.items)
     lists::free<Match>(&p.matches)
@@ -65,8 +66,8 @@ fn close_picker(p *Picker) {
 }
 
 fn restart_picker(p *Picker) error {
-    platform::cancel(p.process)
-    p.process = nil
+    process::close_child(&p.process) @try
+    p.running = false
     free_items(p)
     lists::clear<u8>(&p.pending)
     p.selected = 0
@@ -77,10 +78,6 @@ fn restart_picker(p *Picker) error {
         return err
     }
     defer strings::free(&query)
-    c := strings::to_c(strings::view(&query)) @catch err {
-        return err
-    }
-    defer strings::free_c(&c)
     kind i32 := 0
     if p.kind == 2 {
         kind = 1
@@ -88,9 +85,12 @@ fn restart_picker(p *Picker) error {
             return nil
         }
     }
-    if platform::spawn(kind, strings::c_view(&c), p.hidden, p.ignored, p.regex, &p.process) != 0 {
+    child := spawn_search(kind, strings::view(&query), p.hidden, p.ignored, p.regex) @catch err {
         p.failed = true
+        return nil
     }
+    p.process = memory::take<process::Child>(&child)
+    p.running = true
     return nil
 }
 
@@ -295,12 +295,11 @@ fn add_record(p *Picker, bytes u8[]) error {
 
 fn poll_picker(p *Picker) error {
     p.changed = false
-    if p.process == nil {
+    if p.running == false {
         return nil
     }
     chunk := zero<u8[8192]>()
-    count u64 := 0
-    status := platform::poll(p.process, slice_data<u8>(chunk[:]), 8192, &count)
+    count, status := poll_search(&p.process, chunk[:])
     before := lists::count<Item>(&p.items)
     incoming := chunk[0:count] @catch err {
         return err
@@ -348,8 +347,8 @@ fn poll_picker(p *Picker) error {
     if status != 0 or p.limited or remaining > 1048576 {
         p.changed = true
         p.failed = status < 0
-        platform::cancel(p.process)
-        p.process = nil
+        process::close_child(&p.process) @try
+        p.running = false
     }
     if lists::count<Item>(&p.items) != before {
         p.changed = true

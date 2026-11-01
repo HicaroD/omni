@@ -4,25 +4,27 @@ use "std::terminal"
 use "std::lists"
 use "std::strings"
 use "std::io"
-use "vendor::platform"
+use "std::process"
 
 fn run() error {
-    platform::locale()
-    argument u64 := 1
-    while argument < platform::argc() {
-        option := strings::from_c(platform::arg(argument))
+    args := process::args() @try
+    defer process::free(&args)
+    argument u64 := 0
+    while argument < process::count(&args) {
+        option := process::get(&args, argument) @try
         if option == "--help" or option == "-h" {
-            io::println("Omni — a modal editor in Telia v0.3.0")
+            io::println("Omni — a modal editor in Telia v0.3.2")
             io::println("Usage: omni [--root directory] [file ...]")
             io::println("Normal: i/a/o insert, Esc normal, :help commands, :q quit")
             io::println("Ctrl-p files, Ctrl-f project search, Ctrl-b buffers")
             return nil
         }
         if option == "--root" {
-            if argument + 1 >= platform::argc() {
+            if argument + 1 >= process::count(&args) {
                 return error("--root requires a directory")
             }
-            if platform::root(platform::arg(argument + 1)) != 0 {
+            root := process::get(&args, argument + 1) @try
+            process::chdir(root) @catch err {
                 return error("cannot change project root")
             }
             argument = argument + 1
@@ -35,9 +37,9 @@ fn run() error {
     app.root = new_pane() @try
     app.active = app.root
     open_buffer(&app, "") @try
-    arg_index u64 := 1
-    while arg_index < platform::argc() {
-        arg := strings::from_c(platform::arg(arg_index))
+    arg_index u64 := 0
+    while arg_index < process::count(&args) {
+        arg := process::get(&args, arg_index) @try
         if arg == "--root" {
             arg_index = arg_index + 2
         } else {

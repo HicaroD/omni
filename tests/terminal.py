@@ -13,6 +13,7 @@ import unittest
 import subprocess
 import re
 import unicodedata
+import sys
 
 BINARY = Path(os.environ.get("OMNI_BINARY", Path(__file__).resolve().parents[1] / "bin" / "omni")).resolve()
 
@@ -81,6 +82,13 @@ class Editor:
                 return os.waitstatus_to_exitcode(status)
         raise AssertionError(f"editor did not exit: {bytes(self.output[-1000:])!r}")
 
+    def expect(self, text):
+        deadline = time.monotonic() + 3
+        while text not in self.output and time.monotonic() < deadline:
+            self.read(0.03)
+        if text not in self.output:
+            raise AssertionError(f"missing {text!r}: {bytes(self.output[-1000:])!r}")
+
     def close(self):
         if self.status is None:
             try:
@@ -144,6 +152,138 @@ class TerminalTests(unittest.TestCase):
     def start(self, *files, env=None):
         self.editor = Editor(self.root, *files, env=env)
         return self.editor
+
+    def tools(self, **scripts):
+        tools = self.root / "tools"
+        tools.mkdir(exist_ok=True)
+        for name, script in scripts.items():
+            tool = tools / name
+            tool.write_text(f"#!{sys.executable}\n" + script)
+            tool.chmod(0o755)
+        return {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+
+    def test_clipboard_binary_data_and_pipe_backpressure(self):
+        payload = b"a\x00\xff\xc0" * 40000 + b"\n"
+        (self.root / "source.t").write_bytes(payload)
+        env = self.tools(
+            pbcopy="import sys\nfrom pathlib import Path\nsys.stderr.buffer.write(b'e' * 131072)\nsys.stderr.flush()\nPath('copied.bin').write_bytes(sys.stdin.buffer.read())\n",
+            pbpaste="import sys\nfrom pathlib import Path\nsys.stderr.buffer.write(b'e' * 131072)\nsys.stderr.flush()\nsys.stdout.buffer.write(Path('copied.bin').read_bytes())\n",
+        )
+        e = self.start("source.t", env=env)
+        e.send("yy:copy\r", 0.4)
+        e.expect(b"Yank register copied")
+        self.assertEqual((self.root / "copied.bin").read_bytes(), payload)
+        e.send(":e pasted.t\r:paste\r", 0.4)
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "pasted.t").read_bytes(), payload)
+
+    def test_clipboard_failures_leave_editor_usable(self):
+        env = self.tools(pbcopy="raise SystemExit(2)\n", pbpaste="raise SystemExit(3)\n")
+        e = self.start(env=env)
+        e.send(":copy\r")
+        e.expect(b"pbcopy failed")
+        e.send(":paste\r")
+        e.expect(b"pbpaste failed")
+        e.send("iok")
+        e.send(b"\x1b")
+        e.send(":w ok.t\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "ok.t").read_bytes(), b"ok")
+
+    def test_search_drains_stderr_and_accepts_exit_one(self):
+        (self.root / "target.t").write_text("needle\n")
+        env = self.tools(rg="import sys\nsys.stderr.buffer.write(b'e' * 131072)\nsys.stderr.flush()\nsys.stdout.buffer.write(b'target.t\\0')\nraise SystemExit(1)\n")
+        e = self.start(env=env)
+        e.send(b"\x10", 0.5)
+        deadline = time.monotonic() + 3
+        while b"Literal / smart case" not in e.output and time.monotonic() < deadline:
+            e.read(0.05)
+        self.assertIn(b"target.t", e.output)
+        self.assertIn(b"Literal / smart case", e.output)
+        e.send(b"\r")
+        e.send("iX")
+        e.send(b"\x1b")
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual((self.root / "target.t").read_text(), "Xneedle\n")
+
+    def test_picker_cancel_terminates_child(self):
+        env = self.tools(rg="import os, time\nfrom pathlib import Path\nPath('child.pid').write_text(str(os.getpid()))\ntime.sleep(30)\n")
+        e = self.start(env=env)
+        e.send(b"\x10", 0.2)
+        pidfile = self.root / "child.pid"
+        deadline = time.monotonic() + 3
+        while not pidfile.exists() and time.monotonic() < deadline:
+            e.read(0.03)
+        child = int(pidfile.read_text())
+        e.send(b"\x1b")
+        with self.assertRaises(ProcessLookupError):
+            os.kill(child, 0)
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_search_nonzero_failure_is_reported(self):
+        env = self.tools(rg="raise SystemExit(2)\n")
+        e = self.start(env=env)
+        e.send(b"\x10")
+        e.expect(b"rg failed")
+        e.send(b"\x1b")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_save_detects_replacement_with_same_size_and_timestamp(self):
+        path = self.root / "file.t"
+        path.write_text("original")
+        before = path.stat()
+        e = self.start("file.t")
+        e.send("iX")
+        e.send(b"\x1b")
+        replacement = self.root / "replacement.t"
+        replacement.write_text("external")
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(path)
+        e.send(":w\r")
+        e.expect(b"Save refused")
+        e.send(":qa!\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(path.read_text(), "external")
+
+    def test_new_file_appearing_on_disk_is_not_overwritten(self):
+        e = self.start("new.t")
+        e.send("iours")
+        e.send(b"\x1b")
+        path = self.root / "new.t"
+        path.write_text("theirs")
+        e.send(":w\r")
+        e.expect(b"Save refused")
+        e.send(":qa!\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(path.read_text(), "theirs")
+
+    def test_new_files_are_private_and_can_be_saved_again(self):
+        e = self.start("new.t")
+        e.send("ifirst")
+        e.send(b"\x1b")
+        e.send(":w\ra second")
+        e.send(b"\x1b")
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        path = self.root / "new.t"
+        self.assertEqual(path.stat().st_mode & 0o177, 0)
+        self.assertEqual(path.read_text(), "first second")
+
+    def test_unicode_project_root_and_filename(self):
+        project = self.root / "项目"
+        project.mkdir()
+        path = project / "café 界.t"
+        path.write_text("hello\n")
+        e = self.start("--root", "项目", "café 界.t")
+        e.send("iX")
+        e.send(b"\x1b")
+        e.send(":w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(path.read_text(), "Xhello\n")
 
     def test_insert_save_and_terminal_cleanup(self):
         e = self.start()

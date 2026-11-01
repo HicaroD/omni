@@ -2,29 +2,21 @@ package editor
 
 use "std::lists"
 use "std::strings"
-use "vendor::platform"
+use "std::path"
 use "std::memory"
 
-fn canonical(path string) (strings::Owned, error) {
-    if path == "" {
+fn canonical(name string) (strings::Owned, error) {
+    if name == "" {
         return strings::clone("")
     }
-    c := strings::to_c(path) @try
-    defer strings::free_c(&c)
-    resolved rawptr := nil
-    if platform::path(strings::c_view(&c), &resolved) != 0 {
-        return zero<strings::Owned>(), error("cannot resolve file path")
-    }
-    defer memory::free(resolved)
-    return strings::clone(strings::from_c(platform::cview(resolved)))
+    return path::canonicalize_for_create(name)
 }
 
 fn append_text(out *lists::List<u8>, text string) error {
-    c := strings::to_c(text) @try
-    defer strings::free_c(&c)
     i u64 := 0
     while i < strings::len(text) {
-        lists::append<u8>(out, platform::byte(strings::c_view(&c), i)) @try
+        byte := strings::byte_at(text, i) @try
+        lists::append<u8>(out, byte) @try
         i = i + 1
     }
     return nil
@@ -38,11 +30,7 @@ fn text_bytes(text string) (lists::List<u8>, error) {
 }
 
 fn owned_bytes(bytes u8[]) (strings::Owned, error) {
-    temp := lists::create<u8>()
-    defer lists::free<u8>(&temp)
-    lists::append_slice<u8>(&temp, bytes) @try
-    lists::append<u8>(&temp, 0) @try
-    return strings::clone(strings::from_c(platform::cview(slice_data<u8>(lists::view<u8>(&temp)))))
+    return strings::from_bytes(bytes)
 }
 
 fn number(out *lists::List<u8>, value u64) error {

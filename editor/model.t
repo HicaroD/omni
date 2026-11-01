@@ -4,7 +4,8 @@ use "pkg::rope"
 use "std::lists"
 use "std::strings"
 use "std::memory"
-use "vendor::platform"
+use "std::fs"
+use "std::errors"
 
 struct Edit {
     start u64
@@ -16,7 +17,8 @@ struct Edit {
 }
 
 struct Buffer {
-    stamp u64
+    stamp fs::Metadata
+    exists bool
     text rope::Rope
     path strings::Owned
     history lists::List<Edit>
@@ -171,27 +173,41 @@ fn open_buffer(app *App, path string) error {
         }
         i = i + 1
     }
-    cpath := strings::to_c(name) @try
-    defer strings::free_c(&cpath)
-    data rawptr := nil
-    length u64 := 0
-    status i32 := 1
+    data := strings::Owned{}
+    defer strings::free(&data)
+    info := fs::Metadata{}
+    exists := false
     if name != "" {
-        status = platform::load(strings::c_view(&cpath), &data, &length)
-    }
-    defer memory::free(data)
-    if status < 0 {
-        app.message = "Cannot open file"
-        return nil
+        metadata, stat_err := fs::stat(name)
+        if stat_err != nil and stat_err.kind != errors::Error::NotFound {
+            app.message = "Cannot open file"
+            return nil
+        }
+        exists = stat_err == nil
+        info = metadata
+        if exists {
+            if info.kind != fs::FileType::Regular {
+                app.message = "Cannot open file"
+                return nil
+            }
+            loaded := fs::read_file(name) @catch err {
+                app.message = "Cannot open file"
+                return nil
+            }
+            data = memory::take<strings::Owned>(&loaded)
+        }
     }
     storage := memory::alloc(sizeof<Buffer>()) @try
     values := slice_from_raw<Buffer>(storage, 1)
     values[0] = zero<Buffer>()
     b := &values[0]
     defer free_buffer(b)
-    b.stamp = platform::stamp(strings::c_view(&cpath))
+    b.stamp = info
+    b.exists = exists
     b.path = strings::clone(name) @try
-    rope::replace(&b.text, 0, 0, slice_from_raw<u8>(data, length)) @try
+    bytes := strings::to_bytes(strings::view(&data)) @try
+    defer lists::free<u8>(&bytes)
+    rope::replace(&b.text, 0, 0, lists::view<u8>(&bytes)) @try
     lists::append<*Buffer>(&app.buffers, b) @try
     memory::take<*Buffer>(&b)
     app.message = ""
@@ -222,25 +238,43 @@ fn save_buffer(app *App, path string) error {
             return nil
         }
     }
-    c := strings::to_c(name) @try
-    defer strings::free_c(&c)
-    current_stamp := platform::stamp(strings::c_view(&c))
+    current_stamp, stat_err := fs::stat(name)
+    if stat_err != nil and stat_err.kind != errors::Error::NotFound {
+        app.message = "Cannot inspect save destination"
+        return nil
+    }
+    exists := stat_err == nil
     same := name == strings::view(&b.path)
-    if (same and current_stamp != b.stamp) or (same == false and current_stamp != 0) {
+    changed := exists != b.exists
+    if exists and b.exists {
+        changed = fs::same_file(current_stamp, b.stamp) == false or current_stamp.size != b.stamp.size or current_stamp.modified_seconds != b.stamp.modified_seconds or current_stamp.modified_nanoseconds != b.stamp.modified_nanoseconds
+    }
+    if (same and changed) or (same == false and exists) {
         app.message = "Save refused: file changed on disk or destination already exists"
         return nil
     }
     bytes := rope::copy(&b.text, 0, rope::size(b.text.root)) @try
     defer lists::free<u8>(&bytes)
-    if platform::save(strings::c_view(&c), slice_data<u8>(lists::view<u8>(&bytes)), lists::count<u8>(&bytes)) != 0 {
+    contents := strings::from_bytes(lists::view<u8>(&bytes)) @try
+    defer strings::free(&contents)
+    replaced, save_err := fs::write_atomic(name, strings::view(&contents))
+    if replaced == false {
         app.message = "Save failed; original file was not truncated"
         return nil
     }
     strings::free(&b.path)
     b.path = memory::take<strings::Owned>(&new_name)
     b.saved = b.revision
-    b.stamp = platform::stamp(strings::c_view(&c))
+    updated, updated_err := fs::stat(name)
+    b.stamp = updated
+    b.exists = true
     app.message = "Written"
+    if save_err != nil {
+        app.message = "Written; directory synchronization failed"
+    }
+    if updated_err != nil {
+        app.message = "Written; cannot refresh file metadata"
+    }
     return nil
 }
 

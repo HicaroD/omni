@@ -1,22 +1,9 @@
 # Publishing Omni releases
 
-The `Release` workflow builds Apple Silicon binaries using Telia v0.3.0 on
-`macos-15`, targeting macOS 14 or later via `MACOSX_DEPLOYMENT_TARGET=14.0`.
-It runs native and terminal tests,
-checks that the binary links only to macOS system libraries, ad-hoc signs it,
-and tests the packaged executable outside the checkout. No Telia runtime
-installation is needed by users. These binaries are not notarized by Apple.
-
-The workflow publishes only after all checks pass. Compiler or test failures
-block publication; fix them before shipping. Installer tests also run on
-relevant pushes and pull requests and can be run locally with `make test-install`.
-
-Current release blocker: local `make unit` and `make test-release` with the
-published Telia v0.3.0 compiler fail during C compilation with undeclared
-`_telia_runtime_kind_*` identifiers (including `InvalidPath` and
-`FileOpenFailed`). Resolve this build failure before tagging the first release.
-The standalone binary and minimum macOS version cannot be fully verified until
-the release build passes.
+The `Release` workflow builds with Telia v0.3.2 on `macos-15` for Apple Silicon
+and macOS 14+. It tests the editor, installer, and standalone package, checks
+system-only linking, and ad-hoc signs the binary. Publication requires all checks
+to pass. Binaries need no Telia installation and are not notarized by Apple.
 
 ## Create a release
 

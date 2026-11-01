@@ -4,7 +4,6 @@ use "std::lists"
 use "std::strings"
 use "std::memory"
 use "pkg::rope"
-use "vendor::platform"
 
 fn switch_buffer(app *App, id u64) error {
     if id >= lists::count<*Buffer>(&app.buffers) {
@@ -378,18 +377,17 @@ fn command(app *App) error {
         delete_buffer(app)
     } elif name == "copy" {
         bytes := lists::view<u8>(&app.clipboard)
-        if platform::copy(slice_data<u8>(bytes), len(bytes)) == 0 {
+        copy_err := copy_clipboard(bytes)
+        if copy_err == nil {
             app.message = "Yank register copied to macOS clipboard"
         } else {
             app.message = "pbcopy failed"
         }
     } elif name == "paste" {
-        data rawptr := nil
-        length u64 := 0
-        status := platform::paste(&data, &length)
-        defer memory::free(data)
-        if status == 0 {
-            return edit(app, app.active.cursor, app.active.cursor, slice_from_raw<u8>(data, length))
+        data, paste_err := read_system_clipboard()
+        defer lists::free<u8>(&data)
+        if paste_err == nil {
+            return edit(app, app.active.cursor, app.active.cursor, lists::view<u8>(&data))
         }
         app.message = "pbpaste failed"
     } elif name == "help" {
