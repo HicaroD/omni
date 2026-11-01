@@ -471,6 +471,23 @@ fn move(app *App, key u8) {
             p.cursor = previous_point(&b.text, size)
         }
     }
+    if key == KeyLowerB and p.cursor > 0 {
+        p.cursor = previous_point(&b.text, p.cursor)
+        while p.cursor > 0 and word_class(rope::byte(&b.text, p.cursor)) == 0 {
+            if rope::byte(&b.text, p.cursor) == ByteLF and rope::byte(&b.text, p.cursor - 1) == ByteLF {
+                break
+            }
+            p.cursor = previous_point(&b.text, p.cursor)
+        }
+        kind := word_class(rope::byte(&b.text, p.cursor))
+        while kind != 0 and p.cursor > 0 {
+            previous := previous_point(&b.text, p.cursor)
+            if word_class(rope::byte(&b.text, previous)) != kind {
+                break
+            }
+            p.cursor = previous
+        }
+    }
     if key == KeyLowerH and p.cursor > start {
         p.cursor = previous_point(&b.text, p.cursor)
     }

@@ -653,6 +653,85 @@ fn dollar_motion() error {
     return nil
 }
 
+test "normal b moves to the current or previous word start without changing text" {
+    testing::assert(backward_word_motion() == nil)
+}
+
+fn backward_word_motion() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one  two_three 42") @try
+    app.active.cursor = 16
+    expected u64[4] := .{15,5,0,0}
+    for at in expected {
+        editor::key(&app, 98) @try
+        testing::assert_eq(app.active.cursor, at)
+    }
+    testing::assert(app.mode == editor::Mode::Normal)
+    testing::assert_eq(editor::buffer(&app).revision, 0)
+    return nil
+}
+
+test "normal b crosses indentation but stops on each empty line" {
+    testing::assert(backward_word_lines() == nil)
+}
+
+fn backward_word_lines() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\n  two\n\n\n  fin") @try
+    app.active.cursor = 16
+    expected u64[6] := .{14,11,10,6,0,0}
+    for at in expected {
+        editor::key(&app, 98) @try
+        testing::assert_eq(app.active.cursor, at)
+    }
+    return nil
+}
+
+test "normal b separates punctuation from keyword runs and preserves UTF-8" {
+    testing::assert(backward_word_punctuation() == nil)
+}
+
+fn backward_word_punctuation() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "café_name42...next\tend") @try
+    app.active.cursor = 23
+    expected u64[5] := .{20,15,12,0,0}
+    for at in expected {
+        editor::key(&app, 98) @try
+        testing::assert_eq(app.active.cursor, at)
+    }
+    app.active.cursor = 5
+    editor::key(&app, 98) @try
+    testing::assert_eq(app.active.cursor, 0)
+    return nil
+}
+
+test "normal b is safe in empty buffers and skips leading whitespace from EOF" {
+    testing::assert(backward_word_boundaries() == nil)
+}
+
+fn backward_word_boundaries() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "") @try
+    editor::key(&app, 98) @try
+    testing::assert_eq(app.active.cursor, 0)
+    bytes := editor::text_bytes(" \t\né") @try
+    defer lists::free<u8>(&bytes)
+    rope::replace(&editor::buffer(&app).text, 0, 0, lists::view<u8>(&bytes)) @try
+    app.active.cursor = 5
+    editor::key(&app, 98) @try
+    testing::assert_eq(app.active.cursor, 3)
+    editor::key(&app, 98) @try
+    testing::assert_eq(app.active.cursor, 0)
+    editor::key(&app, 98) @try
+    testing::assert_eq(app.active.cursor, 0)
+    return nil
+}
+
 test "normal w is safe in empty buffers and at a multibyte final character" {
     testing::assert(word_boundaries() == nil)
 }

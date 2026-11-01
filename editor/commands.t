@@ -583,7 +583,7 @@ fn key(app *App, byte u8) error {
         }
         return nil
     }
-    if byte == KeyLowerH or byte == KeyLowerJ or byte == KeyLowerK or byte == KeyLowerL or byte == KeyZero or byte == KeyDollar or byte == KeyUpperG or byte == KeyLowerW {
+    if byte == KeyLowerH or byte == KeyLowerJ or byte == KeyLowerK or byte == KeyLowerL or byte == KeyZero or byte == KeyDollar or byte == KeyUpperG or byte == KeyLowerW or byte == KeyLowerB {
         move(app, byte)
     } elif byte == KeyLowerG or byte == KeyLowerD or byte == KeyLowerY or byte == KeyCtrlW {
         app.pending = byte

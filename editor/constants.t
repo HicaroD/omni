@@ -83,6 +83,7 @@ const KeyUpperO u8 = 79
 const KeyUpperP u8 = 80
 const KeyUpperV u8 = 86
 const KeyLowerA u8 = 97
+const KeyLowerB u8 = 98
 const KeyLowerC u8 = 99
 const KeyLowerD u8 = 100
 const KeyLowerG u8 = 103

@@ -63,7 +63,7 @@ The launch directory is the project root unless you pass `--root`.
 | Keys | Action |
 | --- | --- |
 | `h j k l`, arrows | Move |
-| `w`, `$` | Next word, line end |
+| `w`, `b`, `$` | Next word, previous word start, line end |
 | `i`, `a`, `o` | Enter Insert mode |
 | `v`, `V`, `Ctrl-v` | Select characters, whole lines, or a rectangle |
 | Visual `d`, `y`, `c`, `p` | Delete, yank, change, or replace selection |
