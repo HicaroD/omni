@@ -25,6 +25,7 @@ class Editor:
             os.chdir(root)
             os.environ["TERM"] = "xterm-256color"
             os.environ["OMNI_SYNC_UPDATES"] = "0"
+            os.environ["XDG_CONFIG_HOME"] = str(Path(root) / ".config")
             os.environ.update(env or {})
             os.execv(str(BINARY), [str(BINARY), *files])
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 26, 100, 0, 0))
@@ -139,6 +140,248 @@ def screen_snapshot(output, width=100, height=26):
 
 
 class TerminalTests(unittest.TestCase):
+    def write_config(self, source):
+        path = self.root / ".config" / "omni" / "config.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+        return path
+
+    def test_invalid_config_reports_file_and_line_before_entering_terminal_mode(self):
+        cases = [
+            ("[keys]\nleader = 'unterminated\n", 2),
+            ("[keys.normal]\nx = 'action:typo'\n", 2),
+            ("# heading\n[unknown]\nx = 'l'\n", 2),
+        ]
+        for source, line in cases:
+            with self.subTest(source=source):
+                config = self.write_config(source)
+                result = subprocess.run([str(BINARY), "--config", str(config)],
+                                        cwd=self.root, capture_output=True, timeout=5)
+                output = result.stdout + result.stderr
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Configuration error: {config}:{line}".encode(), output)
+                self.assertNotIn(b"\x1b", output)
+
+    def test_explicit_config_overrides_discovery_and_no_config_bypasses_it(self):
+        self.write_config("invalid = [\n")
+        custom = self.root / "custom config.toml"
+        custom.write_text("[keys.normal]\nQ = 'action:quit'\n")
+        e = self.start("--config", "custom config.toml")
+        e.send("Q")
+        self.assertEqual(e.wait(), 0)
+        e.close()
+        self.editor = None
+        e = self.start("--no-config")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_config_falls_back_to_home_when_xdg_is_empty(self):
+        home = self.root / "home"
+        config = home / ".config" / "omni" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text("[keys.normal]\nQ = 'action:quit'\n")
+        e = self.start(env={"HOME": str(home), "XDG_CONFIG_HOME": ""})
+        e.send("Q")
+        self.assertEqual(e.wait(), 0)
+
+    def test_timeout_runs_a_shorter_mapping_and_flushes_unmatched_insert_text(self):
+        self.write_config("[keys]\ntimeout_ms = 150\n[keys.normal]\ng = 'l'\ngg = '$'\n"
+                          "[keys.insert]\njk = '<Esc>'\n")
+        target = self.root / "doc.txt"
+        target.write_text("abc")
+        e = self.start("doc.txt")
+        e.send("g", delay=0.03)
+        e.read(0.3)
+        e.send("xij", delay=0.03)
+        e.read(0.3)
+        e.send(b"\x1b")
+        e.send(":wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "ajc")
+
+    def test_insert_mapping_prefix_and_bracketed_paste_remain_literal(self):
+        self.write_config("[keys.insert]\njk = '<Esc>'\n")
+        target = self.root / "doc.txt"
+        target.write_text("")
+        e = self.start("doc.txt")
+        e.send(b"ij\x1b[200~jk\x1b[201~\x1b")
+        e.send(":wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "jjk")
+
+    def test_leader_prefix_is_shown_then_times_out_to_comma_find_repeat(self):
+        config = self.root / ".config" / "omni" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text("[keys]\ntimeout_ms = 200\n[keys.normal]\n'<leader>x' = '0'\n")
+        target = self.root / "doc.txt"
+        target.write_text("a(b)c(d)")
+        e = self.start("doc.txt")
+        e.send("f)f)")
+        e.send(",", delay=0.03)
+        screen = screen_snapshot(e.output)
+        self.assertIn("Keys: ,", "".join(char for char, _ in screen[-1]))
+        e.read(0.4)
+        screen = screen_snapshot(e.output)
+        self.assertNotIn("Keys:", "".join(char for char, _ in screen[-1]))
+        e.send("x:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "a(bc(d)")
+
+    def test_space_leader_is_visible_in_pending_key_display(self):
+        self.write_config("[keys]\nleader = '<Space>'\ntimeout_ms = 200\n"
+                          "[keys.normal]\n'<leader>x' = '0'\n")
+        e = self.start()
+        e.send(" ", delay=0.03)
+        screen = screen_snapshot(e.output)
+        self.assertIn("Keys: <Space>", "".join(char for char, _ in screen[-1]))
+        e.send(b"\x1b")
+        e.send(":qa\r")
+        self.assertEqual(e.wait(), 0)
+
+    def test_configuration_loads_from_xdg_and_drives_insert_and_named_action_mappings(self):
+        config = self.root / ".config" / "omni" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text("[keys]\nleader = '!'\n[keys.normal]\n"
+                          "'<leader>w' = 'action:write'\n'<leader>q' = 'action:quit'\n"
+                          "[keys.insert]\njk = '<Esc>'\n")
+        target = self.root / "doc.txt"
+        target.write_text("abc")
+        e = self.start("doc.txt")
+        e.send("iNEWjk!w")
+        self.assertEqual(target.read_text(), "NEWabc")
+        e.send("!q")
+        self.assertEqual(e.wait(), 0)
+
+    def test_character_find_accepts_fragmented_utf8_and_change_undo_redo(self):
+        original = "a界b界c界d界end\nnext"
+        target = self.root / "find.txt"
+        target.write_text(original)
+        e = self.start("find.txt")
+        e.send("2c2f")
+        for byte in "界".encode():
+            e.send(bytes([byte]))
+        e.send("NEW")
+        e.send(b"\x1b")
+        e.send(":w\r")
+        self.assertEqual(target.read_text(), "NEWend\nnext")
+        e.send("u:w\r")
+        self.assertEqual(target.read_text(), original)
+        e.send(b"\x12:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "NEWend\nnext")
+
+    def test_character_find_operator_ranges_and_repeats_through_real_input(self):
+        original = "a(b)c(d)!"
+        cases = [
+            ("df)", "c(d)!"),
+            ("dt)", ")c(d)!"),
+            ("f!dF(", "a(b)c!"),
+            ("f!dT(", "a(b)c(!"),
+            ("f)d;", "a(b!"),
+            ("2f)d,", "a(b)!"),
+        ]
+        target = self.root / "find.txt"
+        for keys, expected in cases:
+            with self.subTest(keys=keys):
+                target.write_text(original)
+                e = self.start("find.txt")
+                e.send(keys + ":w\r")
+                self.assertEqual(target.read_text(), expected)
+                e.send("u:wq\r")
+                self.assertEqual(e.wait(), 0)
+                self.assertEqual(target.read_text(), original)
+                e.close()
+                self.editor = None
+
+    def test_visual_find_repeat_updates_highlighting_at_unicode_boundaries(self):
+        target = self.root / "find.txt"
+        target.write_text("aé界x界!")
+        e = self.start("find.txt")
+        e.send("vt界")
+        screen = screen_snapshot(e.output)
+        self.assertEqual([screen[0][x][1] for x in [0, 1, 2, 4, 5]],
+                         [True, True, False, False, False])
+        e.send(";")
+        screen = screen_snapshot(e.output)
+        self.assertEqual([screen[0][x][1] for x in [0, 1, 2, 4, 5]],
+                         [True, True, True, True, False])
+        e.send("d:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "界!")
+
+    def test_arrow_cancels_pending_find_before_a_later_edit(self):
+        target = self.root / "find.txt"
+        target.write_text("abxc")
+        e = self.start("find.txt")
+        e.send(b"df\x1b[Cx:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "axc")
+
+    def test_insert_shortcuts_save_undo_and_redo_through_real_input(self):
+        original = " \t世界 tail\nnext"
+        cases = [
+            ("I!", " \t!世界 tail\nnext"),
+            ("A!", " \t世界 tail!\nnext"),
+            ("O!", " \t!\n \t世界 tail\nnext"),
+            ("2ls!", " \t!界 tail\nnext"),
+            ("2lC!", " \t!\nnext"),
+        ]
+        target = self.root / "insert.txt"
+        for keys, expected in cases:
+            with self.subTest(keys=keys):
+                target.write_text(original)
+                e = self.start("insert.txt")
+                e.send(keys)
+                e.send(b"\x1b")
+                e.send(":w\r")
+                self.assertEqual(target.read_text(), expected)
+                e.send("u:w\r")
+                self.assertEqual(target.read_text(), original)
+                e.send(b"\x12:wq\r")
+                self.assertEqual(e.wait(), 0)
+                self.assertEqual(target.read_text(), expected)
+                e.close()
+                self.editor = None
+
+    def test_counted_substitute_clamps_to_line_end_and_yanks_whole_characters(self):
+        target = self.root / "substitute.txt"
+        target.write_text("é世\nnext")
+        e = self.start("substitute.txt")
+        e.send("9" * 40 + "s!")
+        e.send(b"\x1b")
+        e.send(":w\r")
+        self.assertEqual(target.read_text(), "!\nnext")
+        e.send("0p:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "!é世\nnext")
+
+    def test_counted_operators_and_word_objects_save_and_undo_through_real_input(self):
+        original = "one two three\n世界 next\nlast"
+        target = self.root / "motions.txt"
+        target.write_text(original)
+        e = self.start("motions.txt")
+        e.send("d2w:w\r")
+        self.assertEqual(target.read_text(), "three\n世界 next\nlast")
+        e.send("j0lciwnew")
+        e.send(b"\x1b")
+        e.send(":w\r")
+        self.assertEqual(target.read_text(), "three\nnew next\nlast")
+        e.send("u:w\r")
+        self.assertEqual(target.read_text(), "three\n世界 next\nlast")
+        e.send("u:w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), original)
+
+    def test_overflowing_counts_are_bounded_by_available_text(self):
+        target = self.root / "counts.txt"
+        target.write_text("one\ntwo\nthree")
+        e = self.start("counts.txt")
+        e.send("9" * 40 + "d" + "9" * 40 + "d:w\r")
+        self.assertEqual(target.read_text(), "")
+        e.send("u" + "9" * 40 + "jdd:w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "one\ntwo")
+
     def test_visual_highlight_is_confined_to_active_split_and_clears_after_yank(self):
         (self.root / "split.txt").write_text("abcd\nefgh")
         e = self.start("split.txt")

@@ -430,7 +430,7 @@ fn pop_point(bytes *lists::List<u8>) {
     }
 }
 
-fn key(app *App, byte u8) error {
+fn builtin_key(app *App, byte u8) error {
     if byte == KeyEscape or byte == KeyCtrlC {
         if app.block_insert {
             if byte == KeyEscape {
@@ -444,6 +444,10 @@ fn key(app *App, byte u8) error {
         }
         app.mode = Mode::Normal
         app.pending = 0
+        app.count = 0
+        app.operator_count = 0
+        app.text_object = 0
+        app.character_find = zero<CharacterFind>()
         app.group = app.group + 1
         return nil
     }
@@ -529,8 +533,13 @@ fn key(app *App, byte u8) error {
         return nil
     }
     app.message = ""
+    if app.character_find.motion != 0 {
+        return finish_character_find(app, byte)
+    }
     if app.pending == KeyCtrlW {
         app.pending = 0
+        app.count = 0
+        app.operator_count = 0
         return window_key(app, byte)
     }
     if byte == KeyUpperV or byte == KeyLowerV or byte == KeyCtrlV {
@@ -554,49 +563,88 @@ fn key(app *App, byte u8) error {
             app.visual_eol = false
         }
         app.pending = 0
+        app.count = 0
+        app.operator_count = 0
+        app.text_object = 0
         return nil
     }
     if visual(app) {
         return visual_key(app, byte)
     }
-    if app.pending != 0 {
-        previous := app.pending
-        app.pending = 0
-        if previous == KeyLowerG and byte == KeyLowerG {
-            app.active.cursor = 0
-        }
-        if (previous == KeyLowerD and byte == KeyLowerD) or (previous == KeyLowerY and byte == KeyLowerY) {
-            start := rope::line_start(&b.text, rope::line_at(&b.text, at))
-            end := line_end(&b.text, at)
-            if end < rope::size(b.text.root) {
-                end = end + 1
-            }
-            yank(app, start, end, true) @catch err {
-                return err
-            }
-            if previous == KeyLowerD {
-                app.group = app.group + 1
-                return edit(app, start, end, zero<u8[]>())
-            }
+    if byte >= AsciiDigitFirst and byte <= AsciiDigitLast and (byte != KeyZero or app.count > 0) {
+        digit := widen<u64>(byte - AsciiDigitFirst)
+        if app.count <= (MaxCommandCount - digit) / 10 {
+            app.count = app.count * 10 + digit
+        } else {
+            app.count = MaxCommandCount
         }
         return nil
     }
-    if byte == KeyLowerH or byte == KeyLowerJ or byte == KeyLowerK or byte == KeyLowerL or byte == KeyZero or byte == KeyDollar or byte == KeyUpperG or byte == KeyLowerW or byte == KeyLowerB {
-        move(app, byte)
-    } elif byte == KeyLowerG or byte == KeyLowerD or byte == KeyLowerY or byte == KeyCtrlW {
-        app.pending = byte
-    } elif byte == KeyLowerI or byte == KeyLowerA or byte == KeyLowerO {
-        app.mode = Mode::Insert
-        app.group = app.group + 1
-        if byte == KeyLowerA and at < line_end(&b.text, at) {
-            app.active.cursor = next_point(&b.text, at)
+    if app.pending != 0 {
+        previous := app.pending
+        if (previous == KeyLowerD or previous == KeyLowerY or previous == KeyLowerC) and app.text_object == 0 and (byte == KeyLowerI or byte == KeyLowerA) {
+            app.text_object = byte
+            return nil
         }
-        if byte == KeyLowerO {
-            end2 := line_end(&b.text, at)
-            insert_newline(app, end2) @catch err {
-                return err
+        app.pending = 0
+        repeats := max(1, app.count)
+        if app.operator_count > MaxCommandCount / repeats {
+            repeats = MaxCommandCount
+        } else {
+            repeats = repeats * max(1, app.operator_count)
+        }
+        app.count = 0
+        app.operator_count = 0
+        object := app.text_object
+        app.text_object = 0
+        if object != 0 {
+            if byte == KeyLowerW {
+                return operator_word_object(app, previous, object == KeyLowerA, repeats)
             }
+            return nil
         }
+        if previous == KeyLowerG and byte == KeyLowerG {
+            app.active.cursor = rope::line_start(&b.text, min(repeats - 1, rope::breaks(b.text.root)))
+        }
+        if (previous == KeyLowerD or previous == KeyLowerY or previous == KeyLowerC) and byte == previous {
+            return operator_lines(app, previous, repeats)
+        }
+        if previous == KeyLowerD or previous == KeyLowerY or previous == KeyLowerC {
+            return operator_motion(app, previous, byte, repeats)
+        }
+        return nil
+    }
+    count := app.count
+    app.count = 0
+    if character_find_motion(byte) {
+        app.character_find = CharacterFind{motion: byte, count: max(1, count)}
+    } elif byte == KeySemicolon or byte == KeyComma {
+        return repeat_character_find(app, byte == KeyComma, max(1, count), 0)
+    } elif byte == KeyUpperG and count > 0 {
+        app.active.cursor = rope::line_start(&b.text, min(count - 1, rope::breaks(b.text.root)))
+    } elif byte == KeyDollar {
+        line := rope::line_at(&b.text, at)
+        target := line + min(max(1, count) - 1, rope::breaks(b.text.root) - line)
+        app.active.cursor = line_end(&b.text, rope::line_start(&b.text, target))
+    } elif byte == KeyLowerH or byte == KeyLowerJ or byte == KeyLowerK or byte == KeyLowerL or byte == KeyZero or byte == KeyUpperG or byte == KeyLowerW or byte == KeyLowerB {
+        repeats := max(1, count)
+        while repeats > 0 {
+            before := app.active.cursor
+            move(app, byte)
+            if app.active.cursor == before {
+                break
+            }
+            repeats = repeats - 1
+        }
+    } elif byte == KeyLowerG or byte == KeyLowerD or byte == KeyLowerY or byte == KeyLowerC or byte == KeyCtrlW {
+        app.pending = byte
+        app.operator_count = max(1, count)
+    } elif byte == KeyLowerI or byte == KeyLowerA or byte == KeyLowerO or byte == KeyUpperI or byte == KeyUpperA or byte == KeyUpperO {
+        return begin_insert(app, byte)
+    } elif byte == KeyUpperC {
+        return operator_motion(app, KeyLowerC, KeyDollar, max(1, count))
+    } elif byte == KeyLowerS {
+        return substitute_characters(app, max(1, count))
     } elif byte == KeyLowerX {
         if at < line_end(&b.text, at) {
             app.group = app.group + 1
@@ -628,5 +676,6 @@ fn key(app *App, byte u8) error {
     } elif byte == KeyCtrlCaret {
         return switch_buffer(app, app.active.previous)
     }
+    app.count = 0
     return nil
 }

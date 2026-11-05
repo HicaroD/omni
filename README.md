@@ -6,6 +6,8 @@ Currently supports macOS. An early implementation, not a Neovim replacement.
 ## Features
 
 - Normal, Insert, and character/line/block Visual modes, undo/redo, and search.
+- Counted motions, composed delete/change/yank operators, and word text objects.
+- TOML configuration with mode-specific mappings and a configurable leader.
 - Multiple buffers and nested horizontal/vertical splits.
 - Fuzzy file and buffer pickers with previews.
 - Project search powered by [ripgrep](https://github.com/BurntSushi/ripgrep).
@@ -64,11 +66,14 @@ The launch directory is the project root unless you pass `--root`.
 | --- | --- |
 | `h j k l`, arrows | Move |
 | `w`, `b`, `$` | Next word, previous word start, line end |
+| `f`/`F`, `t`/`T`, `;`, `,` | Find/till a character on this line; repeat/reverse find |
 | `i`, `a`, `o` | Enter Insert mode |
+| `I`, `A`, `O`, `s`, `C` | Insert at first nonblank, append at line end, open above, substitute, change to line end |
 | `v`, `V`, `Ctrl-v` | Select characters, whole lines, or a rectangle |
 | Visual `d`, `y`, `c`, `p` | Delete, yank, change, or replace selection |
 | `Esc` | Return to Normal mode / cancel |
 | `x`, `dd`, `yy`, `p` | Delete character, delete line, yank line, paste |
+| `3w`, `2dd`, `d2w`, `cw`, `ciw`, `daw` | Counted motions, operators, word text objects |
 | `u`, `Ctrl-r` | Undo / redo |
 | `/`, `n`, `N` | Search, next match, previous match |
 | `Ctrl-p`, `Ctrl-f`, `Ctrl-b` | Find files, search project, switch buffers |
@@ -83,6 +88,25 @@ LSP, plugins, and full Vim compatibility are not implemented.
 
 See the [guide](docs/guide.md) for all commands, picker controls, clipboard use,
 file-safety details, architecture, and known limits.
+
+Configure mappings in `~/.config/omni/config.toml` (or under `XDG_CONFIG_HOME`):
+
+```toml
+[keys]
+leader = ","
+timeout_ms = 1000
+
+[keys.normal]
+"<leader>w" = "action:write"
+"<leader>ff" = "action:files"
+
+[keys.insert]
+jk = "<Esc>"
+```
+
+See [configuration](docs/configuration.md) for supported actions, key notation,
+the small TOML subset, and comma/leader timeout behavior. Use `--config path` to
+select a file or `--no-config` to use built-in defaults.
 
 ## Tests
 

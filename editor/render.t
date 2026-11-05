@@ -611,6 +611,10 @@ fn draw(app *App, output *terminal::Handle) error {
         label(&app.frame, strings::view(&prompt), width - 1) @catch err {
             return err
         }
+    } elif lists::count<u8>(&app.mapping_input) > 0 {
+        pending := pending_mapping_label(app) @try
+        defer strings::free(&pending)
+        label(&app.frame, strings::view(&pending), width) @try
     } else {
         text := app.message
         if text == "" {

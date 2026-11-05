@@ -22,6 +22,12 @@ fn compact_input(app *App) {
 }
 
 fn arrow(app *App, direction u8) error {
+    cancel_mapping(app, true) @try
+    app.character_find = zero<CharacterFind>()
+    app.pending = 0
+    app.count = 0
+    app.operator_count = 0
+    app.text_object = 0
     if app.picker.kind != PickerKind::None {
         if direction == AnsiArrowUp {
             return key(app, KeyCtrlK)
@@ -46,7 +52,7 @@ fn arrow(app *App, direction u8) error {
         motion = KeyDollar
     }
     if visual(app) {
-        return key(app, motion)
+        return builtin_key(app, motion)
     }
     if app.mode == Mode::Normal or app.mode == Mode::Insert {
         if motion != 0 and app.block_insert {
@@ -125,6 +131,7 @@ fn decode(app *App, expired bool) error {
                     }
                 } else {
                     if end == 5 and bytes[2] == ByteTwo and bytes[3] == ByteZero and bytes[4] == ByteZero and bytes[5] == ByteTilde {
+                        cancel_mapping(app, app.mode == Mode::Insert) @try
                         app.paste = true
                         lists::clear<u8>(&app.paste_data)
                     } else {

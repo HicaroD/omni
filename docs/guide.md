@@ -20,14 +20,23 @@ Run inside an ANSI-compatible terminal with UTF-8 locale settings. Both standard
 input and output must be terminals. The launch directory is the project root;
 `--root` changes it before opening files. Relative file paths use that root.
 
+Configuration loads from `~/.config/omni/config.toml` (or `XDG_CONFIG_HOME`).
+Use `--config path` or `--no-config` to override discovery. See the
+[configuration guide](configuration.md) for mode-specific mappings, the comma
+leader, timeout behavior, and the deliberately small TOML subset.
+
 ## Editing
 
 | Keys | Action |
 | --- | --- |
 | `h j k l`, arrows | Move left/down/up/right |
 | `w` | Move to the start of the next word |
+| `f{char}`, `F{char}`, `t{char}`, `T{char}` | Find forward/backward; stop before/after a character |
+| `;`, `,` | Repeat the last character find; repeat in the opposite direction |
 | `0`, `$`, `gg`, `G` | Line start/end, first/last line |
 | `i`, `a`, `o` | Insert before cursor, append, open a line below |
+| `I`, `A`, `O` | Insert at first nonblank, append at line end, open a line above |
+| `s`, `C` | Substitute character(s), change from cursor to line end |
 | `Esc`, `Ctrl-c` | Return to Normal mode / cancel prompt or picker |
 | `x`, `dd` | Delete character / line into the editor-local yank register |
 | `yy`, `p` | Yank line / paste after character or line |
@@ -40,9 +49,20 @@ Insert mode accepts text, Enter, Tab, Backspace, and arrows. Bracketed paste is
 inserted literally as one undo unit, including newlines and command-like text.
 It is ignored outside Insert mode. An Insert session is grouped for undo.
 
-`o` and Insert-mode Enter copy the line's leading spaces and tabs onto the new
+`o`, `O`, and Insert-mode Enter copy the line's leading spaces and tabs onto the new
 line, placing the cursor after the indentation. Enter within indentation copies
 only the prefix before the cursor. No language-specific indentation is added.
+
+`I` skips leading spaces and tabs; on a whitespace-only line it inserts after
+that indentation. `A` appends before the newline, or at EOF. `O` opens above
+the current line, including the first line. Opening a line and typing into it
+undo together.
+
+`3s` substitutes up to three UTF-8 code points on the current line without
+removing its newline. `C` is shorthand for `c$`; `2C` changes through the end of
+the following line. Deleted text is available to `p`. On an empty line, `s` and
+`C` enter Insert mode without clearing the previous yank. Deletion and replacement
+text undo together.
 
 `w` distinguishes keyword runs (letters, digits, underscores, and non-ASCII
 characters) from punctuation runs. It skips whitespace across lines, stops on
@@ -50,6 +70,49 @@ empty lines, and stays on a UTF-8 character boundary at the end of the buffer.
 
 Search wraps and uses ASCII smart case: queries with uppercase ASCII letters
 match case-sensitively. No regex support for in-buffer search yet.
+
+### Counts and composed edits
+
+Normal-mode motions accept counts: `3w`, `2b`, `10l`, `2j`. `0` still moves to
+line start; zero after another digit extends the count. `3G` and `3gg` go to
+line three, while `2$` goes to the end of the following line.
+
+Combine `d` (delete), `c` (change), or `y` (yank) with `h`, `l`, `w`, `b`, `0`,
+`$`, `j`, `k`, or a character find. Vertical operators act on complete lines. Repeat an operator
+for whole lines: `dd`, `cc`, `yy`. Counts before and after an operator multiply:
+`2d3w` deletes six words. `cw` preserves whitespace after the changed word.
+
+Word text objects work with these operators: `ciw` changes the whole word under
+the cursor, `diw` deletes its contents, and `daw` also removes adjacent spaces.
+Keyword and punctuation runs are separate words. Counted `iw` treats whitespace
+as a separate object, matching Vim; `aw` counts words with their adjacent spaces.
+Changes and their replacement text undo together. Esc or Ctrl-c cancels a pending
+operator/count; invalid operator sequences are discarded without editing.
+
+Counts currently apply to these Normal-mode motions, operators, and word objects,
+plus `s` and `C`, not all commands or Visual mode. Insert repetition such as
+`3Itext` or `3Otext` is not implemented. Other text objects and `.` repeat are not yet
+implemented.
+
+### Character finds
+
+`f)` moves onto the next `)` on the current line; `F(` searches backward.
+`t)` stops just before a forward target, while `T(` stops just after a backward
+target. Counts select an occurrence: `2f)` finds the second following `)`.
+Targets may be UTF-8 code points, tabs, or spaces. Searches never cross a newline;
+if the requested occurrence does not exist, the cursor and text stay unchanged.
+
+`;` repeats the last find with a fresh count (`2;`), and `,` reverses its direction
+without changing the remembered direction. Repeating `t`/`T` skips an adjacent
+target that would leave the cursor unchanged. Finds also extend Visual selections,
+including block selections; Visual-mode counts are still unsupported.
+
+Operators compose with finds and repeats: `df)` deletes through `)`, `dt)` leaves
+the target intact, `ct"` changes up to a quote, and `y2f,` yanks through the second
+comma. Counts multiply as usual. Backward operators leave the original cursor's
+character intact. A failed find does not perform a partial edit or erase the yank.
+Esc, Ctrl-c, Backspace, arrows, and invalid target encodings cancel an unfinished
+find. The last find is shared across buffers for the current editor session.
 
 ### Visual selection
 
@@ -88,7 +151,7 @@ repetition, leaving the first-row edits intact. Multi-line block insertion is
 not supported. A completed Visual edit, including block repetition, undoes as
 one operation. Press Esc before switching buffers/windows or entering commands.
 
-This is a Vim-style subset: `gv`, text objects, named registers, counts, Visual
+This is a Vim-style subset: `gv`, Visual text objects, named registers, Visual counts, Visual
 indentation/case operators, and Visual Ex ranges are not implemented.
 
 ### Commands
@@ -176,12 +239,21 @@ rope/rope.t               mutable chunked rope (randomized implicit treap)
 editor/model.t            buffers, edit history, views, split ownership
 editor/constants.t        typed modes/registers/pickers and named key/text bytes
 editor/commands.t         modal commands, navigation, search, clipboard
+editor/operators.t        composed operators and shared edit-range application
+editor/objects.t          word text-object ranges
+editor/insert.t           insert entry points, indentation, open-above and substitute
+editor/find.t             character-find input, motions, repeats and operator ranges
 editor/visual.t           selection ranges, rectangular edits and block insertion
 editor/input.t            streaming key/escape/paste decoder
 editor/render.t           terminal-cell layout and batched rendering
 editor/screen.t           row cache, changed-row writes, cursor/sync state
 editor/picker.t           fuzzy ranking, incremental rg results, previews
 editor/session.t          terminal lifecycle, CLI, event loop
+editor/config.t           configuration schema, discovery and validation
+editor/mapping.t          key notation, mapping prefixes and fallback
+editor/actions.t          named mapping actions
+editor/clock.t            macOS monotonic mapping deadlines
+toml/toml.t               small native TOML configuration parser
 editor/process.t          search and clipboard subprocesses
 *_test.t                  native Telia rope/editor unit tests
 tests/                    real-PTY integration tests and sanitizer tooling
@@ -196,8 +268,8 @@ Run `reset` if the terminal is left in a bad state.
 
 ## Limits
 
-- No syntax highlighting, LSP, plugins, mouse, composed motions, counts,
-  macros, language-aware indentation, soft wrapping, or persistent configuration.
+- No syntax highlighting, LSP, plugins, mouse, full Vim motion/operator compatibility,
+  macros, language-aware indentation, soft wrapping, or per-language configuration.
 - Pickers retain up to 50,000 candidates and show the top 100. Previews read at
   most the first MiB. Individual search records larger than a MiB stop the scan.
 - File loading/saving, preview loading, in-buffer search, and clipboard commands

@@ -54,6 +54,11 @@ struct Position {
 }
 
 struct App {
+    config Config
+    config_line u64
+    mapping_input lists::List<u8>
+    mapping_mode MappingMode
+    mapping_deadline u64
     buffers lists::List<*Buffer>
     root *Pane
     active *Pane
@@ -72,6 +77,11 @@ struct App {
     block_insert_eol bool
     block_insert_rows lists::List<u64>
     pending u8
+    count u64
+    operator_count u64
+    text_object u8
+    character_find CharacterFind
+    last_character_find CharacterFind
     group u64
     prompt lists::List<u8>
     search lists::List<u8>
@@ -144,6 +154,8 @@ fn free_buffer(b *Buffer) {
 }
 
 fn free_app(app *App) {
+    free_config(&app.config)
+    lists::free<u8>(&app.mapping_input)
     close_picker(&app.picker)
     items := lists::view<*Buffer>(&app.buffers)
     for b in items {
@@ -421,10 +433,7 @@ fn line_end(r *rope::Rope, at u64) u64 {
 fn insert_newline(app *App, at u64) error {
     b := buffer(app)
     start := rope::line_start(&b.text, rope::line_at(&b.text, at))
-    end := start
-    while end < at and (rope::byte(&b.text, end) == ByteSpace or rope::byte(&b.text, end) == ByteTab) {
-        end = end + 1
-    }
+    end := indentation_end(&b.text, start, at)
     data := lists::create<u8>()
     defer lists::free<u8>(&data)
     lists::append<u8>(&data, ByteLF) @try

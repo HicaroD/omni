@@ -7,6 +7,225 @@ use "std::memory"
 use "std::strings"
 use "std::testing"
 
+test "Normal counts repeat motions and zero still moves to line start" {
+    testing::assert(counted_motions() == nil)
+}
+
+fn counted_motions() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one two three four\nnext\nlast") @try
+    press(&app, "3w") @try
+    testing::assert_eq(app.active.cursor, 14)
+    press(&app, "0") @try
+    testing::assert_eq(app.active.cursor, 0)
+    press(&app, "2j") @try
+    testing::assert_eq(app.active.cursor, 24)
+    return assert_editor_text(&app, "one two three four\nnext\nlast")
+}
+
+test "Counts before and after a doubled operator multiply and undo together" {
+    testing::assert(counted_lines() == nil)
+}
+
+fn counted_lines() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\ntwo\nthree\nfour\nfive\nsix") @try
+    press(&app, "2d2d") @try
+    assert_editor_text(&app, "five\nsix") @try
+    press(&app, "u") @try
+    assert_editor_text(&app, "one\ntwo\nthree\nfour\nfive\nsix") @try
+    press(&app, "2yyGp") @try
+    return assert_editor_text(&app, "one\ntwo\nthree\nfour\nfive\nsix\none\ntwo")
+}
+
+test "Delete composes with counted word motions and yanks the deleted range" {
+    testing::assert(delete_words() == nil)
+}
+
+fn delete_words() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one two three four") @try
+    press(&app, "d2w") @try
+    assert_editor_text(&app, "three four") @try
+    press(&app, "u") @try
+    assert_editor_text(&app, "one two three four") @try
+    press(&app, "2dw") @try
+    assert_editor_text(&app, "three four") @try
+    press(&app, "p") @try
+    return assert_editor_text(&app, "tone two hree four")
+}
+
+test "Word delete preserves the final line break and removes whole UTF-8 characters at EOF" {
+    testing::assert(delete_word_boundaries() == nil)
+}
+
+fn delete_word_boundaries() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "éclair  \n  世界") @try
+    press(&app, "dw") @try
+    assert_editor_text(&app, "\n  世界") @try
+    press(&app, "j0wdw") @try
+    assert_editor_text(&app, "\n  ") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "\n  世界")
+}
+
+test "Change word preserves trailing whitespace and replacement undoes as one edit" {
+    testing::assert(change_word() == nil)
+}
+
+fn change_word() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one two three") @try
+    press(&app, "c2wnew") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "new three") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "one two three")
+}
+
+test "Operators compose with backward, horizontal, line-end and vertical motions" {
+    testing::assert(operator_motions() == nil)
+}
+
+fn operator_motions() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one two\nthree\nfour") @try
+    press(&app, "wd0") @try
+    assert_editor_text(&app, "two\nthree\nfour") @try
+    press(&app, "d$") @try
+    assert_editor_text(&app, "\nthree\nfour") @try
+    press(&app, "u0dj") @try
+    assert_editor_text(&app, "four") @try
+    press(&app, "uGdk") @try
+    return assert_editor_text(&app, "two")
+}
+
+test "Inner word change finds the whole word from its middle and undoes replacement" {
+    testing::assert(inner_word_change() == nil)
+}
+
+fn inner_word_change() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "hello 世界 next") @try
+    press(&app, "wlciwnew") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "hello new next") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "hello 世界 next")
+}
+
+test "Around word delete prefers trailing spaces and uses preceding spaces at line end" {
+    testing::assert(around_word_delete() == nil)
+}
+
+fn around_word_delete() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one  two three") @try
+    press(&app, "wdaw") @try
+    assert_editor_text(&app, "one  three") @try
+    press(&app, "daw") @try
+    return assert_editor_text(&app, "one")
+}
+
+test "Counts select absolute lines with G and gg and relative lines with dollar" {
+    testing::assert(counted_line_targets() == nil)
+}
+
+fn counted_line_targets() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "a\nbb\nccc\ndddd") @try
+    press(&app, "2G") @try
+    testing::assert_eq(app.active.cursor, 2)
+    press(&app, "3gg") @try
+    testing::assert_eq(app.active.cursor, 5)
+    press(&app, "gg2$") @try
+    testing::assert_eq(app.active.cursor, 4)
+    press(&app, "G") @try
+    testing::assert_eq(app.active.cursor, 9)
+    return nil
+}
+
+test "Word text objects honor multiplied counts" {
+    testing::assert(counted_word_objects() == nil)
+}
+
+fn counted_word_objects() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one two three four five") @try
+    press(&app, "2d2iw") @try
+    assert_editor_text(&app, "three four five") @try
+    press(&app, "u2daw") @try
+    return assert_editor_text(&app, "three four five")
+}
+
+test "Cancelled and invalid commands do not leak their counts into later edits" {
+    testing::assert(cancelled_counts() == nil)
+}
+
+fn cancelled_counts() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one two three four") @try
+    press(&app, "3vvw") @try
+    testing::assert_eq(app.active.cursor, 4)
+    press(&app, "d2") @try
+    editor::key(&app, 27) @try
+    press(&app, "dizw") @try
+    testing::assert_eq(app.active.cursor, 8)
+    press(&app, "0d2iw") @try
+    return assert_editor_text(&app, "two three four")
+}
+
+test "Around word on whitespace includes the next word without eating its following space" {
+    testing::assert(around_whitespace() == nil)
+}
+
+fn around_whitespace() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one  two three") @try
+    press(&app, "3ldaw") @try
+    return assert_editor_text(&app, "one three")
+}
+
+test "Counted word operators treat empty lines as word-motion stops" {
+    testing::assert(delete_across_empty_lines() == nil)
+}
+
+fn delete_across_empty_lines() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "one\n\n\ntwo") @try
+    press(&app, "d2w") @try
+    return assert_editor_text(&app, "\ntwo")
+}
+
+test "Change to line end enters Insert mode even on an empty line" {
+    testing::assert(change_empty_line() == nil)
+}
+
+fn change_empty_line() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "\nnext") @try
+    press(&app, "c$new") @try
+    editor::key(&app, 27) @try
+    assert_editor_text(&app, "new\nnext") @try
+    press(&app, "u") @try
+    return assert_editor_text(&app, "\nnext")
+}
+
 test "editor byte conversions preserve embedded zeros and invalid UTF-8" {
     testing::assert(binary_text_roundtrip() == nil)
 }

@@ -58,6 +58,13 @@ fn visual_range(app *App) (u64, u64) {
 }
 
 fn visual_key(app *App, byte u8) error {
+    if app.pending == 0 and character_find_motion(byte) {
+        app.character_find = CharacterFind{motion: byte, count: 1}
+        return nil
+    }
+    if app.pending == 0 and (byte == KeySemicolon or byte == KeyComma) {
+        return repeat_character_find(app, byte == KeyComma, 1, 0)
+    }
     if byte == KeySlash {
         app.search_mode = app.mode
         app.mode = Mode::Search
@@ -203,25 +210,7 @@ fn visual_key(app *App, byte u8) error {
     if byte == KeyLowerD or byte == KeyLowerY or byte == KeyLowerX or byte == KeyLowerC {
         start, end := visual_range(app)
         linewise := app.mode == Mode::VisualLine
-        yank(app, start, end, linewise) @try
-        app.mode = Mode::Normal
-        app.active.cursor = start
-        if byte != KeyLowerY {
-            app.group = app.group + 1
-            if byte == KeyLowerC {
-                app.mode = Mode::Insert
-                if linewise and end > start and rope::byte(&buffer(app).text, end - 1) == ByteLF {
-                    end = end - 1
-                }
-            }
-            if linewise and byte != KeyLowerC and start > 0 and end == rope::size(buffer(app).text.root) {
-                if start == end or rope::byte(&buffer(app).text, end - 1) != ByteLF {
-                    start = start - 1
-                }
-            }
-            return edit(app, start, end, zero<u8[]>())
-        }
-        return nil
+        return operate_range(app, byte, start, end, linewise)
     }
     if app.pending == KeyLowerG {
         app.pending = 0
