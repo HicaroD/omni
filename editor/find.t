@@ -80,6 +80,10 @@ fn repeat_character_find(app *App, reverse bool, count u64, operator u8) error {
 }
 
 fn apply_character_find(app *App, request CharacterFind, repeated bool) error {
+    if app.change_active and app.repeating == false {
+        app.change.find = request
+        app.change.find_repeated = repeated
+    }
     r := &buffer(app).text
     end := line_end(r, app.active.cursor)
     start := rope::line_start(r, rope::line_at(r, app.active.cursor))

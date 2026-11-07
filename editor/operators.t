@@ -3,6 +3,9 @@ package editor
 use "pkg::rope"
 
 fn operator_motion(app *App, operator u8, motion u8, count u64) error {
+    if operator == KeyLowerD or operator == KeyLowerC {
+        begin_change(app, Change{command: operator, motion: motion, count: count})
+    }
     if motion == KeySemicolon or motion == KeyComma {
         return repeat_character_find(app, motion == KeyComma, count, operator)
     }
@@ -87,6 +90,9 @@ fn operator_word(app *App, operator u8, count u64) error {
 }
 
 fn operator_lines(app *App, operator u8, count u64) error {
+    if operator == KeyLowerD or operator == KeyLowerC {
+        begin_change(app, Change{command: operator, motion: operator, count: count})
+    }
     r := &buffer(app).text
     first := rope::line_at(r, app.active.cursor)
     last := first + min(count - 1, rope::breaks(r.root) - first)

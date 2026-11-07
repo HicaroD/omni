@@ -35,6 +35,9 @@ fn mapping_action(name string) (Action, error) {
 }
 
 fn execute_action(app *App, action Action) error {
+    if action != Action::Normal and action != Action::Write {
+        discard_change(app)
+    }
     app.group = app.group + 1
     if action == Action::Write {
         return save_buffer(app, "")

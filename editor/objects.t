@@ -3,6 +3,9 @@ package editor
 use "pkg::rope"
 
 fn operator_word_object(app *App, operator u8, around bool, count u64) error {
+    if operator == KeyLowerD or operator == KeyLowerC {
+        begin_change(app, Change{command: operator, object: true, around: around, count: count})
+    }
     r := &buffer(app).text
     start := app.active.cursor
     end := start

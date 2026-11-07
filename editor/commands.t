@@ -431,6 +431,15 @@ fn pop_point(bytes *lists::List<u8>) {
 }
 
 fn builtin_key(app *App, byte u8) error {
+    record_change_input(app, ChangeInputKind::Key, byte) @try
+    dispatch_key(app, byte) @try
+    if app.change_active and app.mode != Mode::Insert and app.character_find.motion == 0 {
+        finish_change(app)
+    }
+    return nil
+}
+
+fn dispatch_key(app *App, byte u8) error {
     if byte == KeyEscape or byte == KeyCtrlC {
         if app.block_insert {
             if byte == KeyEscape {
@@ -645,8 +654,11 @@ fn builtin_key(app *App, byte u8) error {
         return operator_motion(app, KeyLowerC, KeyDollar, max(1, count))
     } elif byte == KeyLowerS {
         return substitute_characters(app, max(1, count))
+    } elif byte == KeyDot {
+        return repeat_change(app, count)
     } elif byte == KeyLowerX {
         if at < line_end(&b.text, at) {
+            begin_change(app, Change{command: byte, count: 1})
             app.group = app.group + 1
             yank(app, at, next_point(&b.text, at), false) @catch err {
                 return err
@@ -654,6 +666,7 @@ fn builtin_key(app *App, byte u8) error {
             return edit(app, at, next_point(&b.text, at), zero<u8[]>())
         }
     } elif byte == KeyLowerP {
+        begin_change(app, Change{command: byte, count: 1})
         app.group = app.group + 1
         return paste_clipboard(app)
     } elif byte == KeyLowerU or byte == KeyCtrlR {

@@ -58,6 +58,9 @@ fn visual_range(app *App) (u64, u64) {
 }
 
 fn visual_key(app *App, byte u8) error {
+    if byte == KeyLowerD or byte == KeyLowerX or byte == KeyLowerC or byte == KeyLowerP or byte == KeyUpperP or (app.mode == Mode::VisualBlock and (byte == KeyUpperI or byte == KeyUpperA)) {
+        begin_visual_change(app, byte)
+    }
     if app.pending == 0 and character_find_motion(byte) {
         app.character_find = CharacterFind{motion: byte, count: 1}
         return nil

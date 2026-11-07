@@ -91,8 +91,7 @@ operator/count; invalid operator sequences are discarded without editing.
 
 Counts currently apply to these Normal-mode motions, operators, and word objects,
 plus `s` and `C`, not all commands or Visual mode. Insert repetition such as
-`3Itext` or `3Otext` is not implemented. Other text objects and `.` repeat are not yet
-implemented.
+`3Itext` or `3Otext` is not implemented. Other text objects are not yet implemented.
 
 ### Character finds
 

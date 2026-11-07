@@ -12,6 +12,7 @@ fn indentation_end(r *rope::Rope, start u64, limit u64) u64 {
 }
 
 fn begin_insert(app *App, command u8) error {
+    begin_change(app, Change{command: command, count: 1})
     r := &buffer(app).text
     at := app.active.cursor
     app.mode = Mode::Insert
@@ -32,6 +33,7 @@ fn begin_insert(app *App, command u8) error {
 }
 
 fn substitute_characters(app *App, count u64) error {
+    begin_change(app, Change{command: KeyLowerS, count: count})
     r := &buffer(app).text
     start := app.active.cursor
     end := start

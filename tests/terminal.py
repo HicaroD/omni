@@ -140,6 +140,47 @@ def screen_snapshot(output, width=100, height=26):
 
 
 class TerminalTests(unittest.TestCase):
+    def test_dot_repeats_resolved_mapping_in_another_buffer(self):
+        self.write_config("[keys.normal]\nQ = 'Iabc<Esc>'\nI = 'x'\n"
+                          "[keys.insert]\na = 'z'\njk = '<Esc>'\n")
+        first = self.root / "first.txt"
+        second = self.root / "second.txt"
+        first.write_text("one")
+        second.write_text("two")
+        e = self.start("first.txt")
+        e.send("Q:w\r:e second.txt\r.")
+        e.send(":w\r")
+        self.assertEqual(second.read_text(), "abctwo")
+        e.send("u:w\r:qa\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(first.read_text(), "abcone")
+        self.assertEqual(second.read_text(), "two")
+
+    def test_dot_repeats_visual_block_insertion_and_undoes_all_rows(self):
+        target = self.root / "doc.txt"
+        target.write_text("ab\ncd\nef\ngh")
+        e = self.start("doc.txt")
+        e.send(b"\x16jI!\x1b")
+        e.send("jj0.:w\r")
+        self.assertEqual(target.read_text(), "!ab\n!cd\n!ef\n!gh")
+        e.send("u:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_text(), "!ab\n!cd\nef\ngh")
+
+    def test_dot_repeats_bracketed_paste_literally_and_undoes_it_together(self):
+        self.write_config("[keys.insert]\njk = '<Esc>'\n")
+        target = self.root / "doc.txt"
+        target.write_text("ab")
+        e = self.start("doc.txt")
+        payload = b"jk\n:wq\t\x1b!"
+        e.send(b"i\x1b[200~" + payload + b"\x1b[201~\x1b")
+        e.send("G$.")
+        e.send(":w\r")
+        self.assertEqual(target.read_bytes(), payload + b"ab" + payload)
+        e.send("u:wq\r")
+        self.assertEqual(e.wait(), 0)
+        self.assertEqual(target.read_bytes(), payload + b"ab")
+
     def write_config(self, source):
         path = self.root / ".config" / "omni" / "config.toml"
         path.parent.mkdir(parents=True, exist_ok=True)

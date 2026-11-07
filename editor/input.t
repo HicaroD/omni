@@ -23,6 +23,10 @@ fn compact_input(app *App) {
 
 fn arrow(app *App, direction u8) error {
     cancel_mapping(app, true) @try
+    record_change_input(app, ChangeInputKind::Arrow, direction) @try
+    if app.change_active and app.mode != Mode::Insert {
+        finish_change(app)
+    }
     app.character_find = zero<CharacterFind>()
     app.pending = 0
     app.count = 0
@@ -65,6 +69,9 @@ fn arrow(app *App, direction u8) error {
 
 fn finish_paste(app *App) error {
     if app.mode == Mode::Insert and app.picker.kind == PickerKind::None {
+        for byte in lists::view<u8>(&app.paste_data) {
+            record_change_input(app, ChangeInputKind::Literal, byte) @try
+        }
         if app.block_insert == false {
             app.group = app.group + 1
         }

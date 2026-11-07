@@ -84,6 +84,12 @@ struct App {
     last_character_find CharacterFind
     group u64
     prompt lists::List<u8>
+    last_change Change
+    change Change
+    change_active bool
+    change_edited bool
+    repeating bool
+    repeat_group u64
     search lists::List<u8>
     search_mode Mode
     message string
@@ -154,6 +160,8 @@ fn free_buffer(b *Buffer) {
 }
 
 fn free_app(app *App) {
+    lists::free<ChangeInput>(&app.last_change.input)
+    lists::free<ChangeInput>(&app.change.input)
     free_config(&app.config)
     lists::free<u8>(&app.mapping_input)
     close_picker(&app.picker)
@@ -351,12 +359,19 @@ fn edit(app *App, start u64, end u64, data u8[]) error {
         free_edit(&old)
     }
     b.serial = b.serial + 1
-    record := Edit{start: start, before: memory::take<lists::List<u8>>(&before), after: memory::take<lists::List<u8>>(&after), previous: b.revision, revision: b.serial, group: app.group}
+    group := app.group
+    if app.repeating {
+        group = app.repeat_group
+    }
+    record := Edit{start: start, before: memory::take<lists::List<u8>>(&before), after: memory::take<lists::List<u8>>(&after), previous: b.revision, revision: b.serial, group: group}
     defer free_edit(&record)
     lists::append<Edit>(&b.history, record) @try
     memory::take<Edit>(&record)
     b.history_at = b.history_at + 1
     b.revision = b.serial
+    if app.change_active {
+        app.change_edited = true
+    }
     adjust(app.root, app.active.buffer, start, end, len(data))
     app.active.cursor = start + len(data)
     return nil

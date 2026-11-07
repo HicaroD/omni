@@ -71,6 +71,7 @@ const KeyDollar u8 = 36
 const KeyPlus u8 = 43
 const KeyComma u8 = 44
 const KeyMinus u8 = 45
+const KeyDot u8 = 46
 const KeySlash u8 = 47
 const KeyZero u8 = 48
 const KeyColon u8 = 58
