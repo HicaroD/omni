@@ -1056,6 +1056,25 @@ fn escape_prefixes() error {
     return nil
 }
 
+test "Arrow input split across decoder calls moves before inserting the next character" {
+    testing::assert(fragmented_arrow_input() == nil)
+}
+
+fn fragmented_arrow_input() error {
+    app := zero<editor::App>()
+    defer editor::free_app(&app)
+    setup_editor(&app, "ab") @try
+    press(&app, "A") @try
+    arrow u8[3] := .{27,91,68}
+    for byte in arrow[:] {
+        lists::append<u8>(&app.input, byte) @try
+        editor::decode(&app, false) @try
+    }
+    press(&app, "X") @try
+    editor::key(&app, editor::KeyEscape) @try
+    return assert_editor_text(&app, "aXb")
+}
+
 test "decimal parsing safely reaches slice and digit-table boundaries" {
     digits u8[3] := .{49,50,51}
     invalid u8[1] := .{58}

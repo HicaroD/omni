@@ -815,11 +815,12 @@ class TerminalTests(unittest.TestCase):
         self.assertEqual(e.wait(), 0)
         self.assertEqual((self.root / "target.t").read_text(), "Xneedle\nYsecond\n")
 
-    def test_fragmented_arrow_and_resize(self):
+    def test_arrow_and_resize(self):
         e = self.start()
         e.send("iab")
-        e.send(b"\x1b[", 0.01)
-        e.send(b"D")
+        # Fragment buffering is covered with explicit expiry in native tests;
+        # wall-clock gaps between PTY writes are unreliable on loaded CI hosts.
+        e.send(b"\x1b[D")
         e.send("X")
         fcntl.ioctl(e.fd, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 45, 0, 0))
         e.read(0.1)
